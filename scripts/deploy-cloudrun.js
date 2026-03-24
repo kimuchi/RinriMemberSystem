@@ -8,7 +8,14 @@ const { execSync } = require("child_process");
 
 function run(cmd) {
   console.log(`>>> ${cmd}`);
-  execSync(cmd, { stdio: "inherit" });
+  try {
+    execSync(cmd, { stdio: "inherit" });
+  } catch (e) {
+    console.error("");
+    console.error(`エラー: コマンドが失敗しました (終了コード: ${e.status})`);
+    console.error("上記のエラーメッセージを確認してください。");
+    process.exit(e.status || 1);
+  }
 }
 
 function getOutput(cmd) {

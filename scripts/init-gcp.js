@@ -7,9 +7,19 @@
 const { execSync } = require("child_process");
 const readline = require("readline");
 
-function run(cmd) {
+function run(cmd, { ignoreError = false } = {}) {
   console.log(`>>> ${cmd}`);
-  execSync(cmd, { stdio: "inherit" });
+  try {
+    execSync(cmd, { stdio: "inherit" });
+  } catch (e) {
+    if (ignoreError) {
+      return false;
+    }
+    console.error("");
+    console.error(`エラー: コマンドが失敗しました (終了コード: ${e.status})`);
+    throw e;
+  }
+  return true;
 }
 
 function prompt(question) {
@@ -58,18 +68,41 @@ async function main() {
 
   // === 必要なAPIを有効化 ===
   console.log(">>> APIを有効化中...");
-  run(
-    "gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com sheets.googleapis.com drive.googleapis.com iamcredentials.googleapis.com"
-  );
+  const apis = [
+    "run.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "sheets.googleapis.com",
+    "drive.googleapis.com",
+    "iamcredentials.googleapis.com",
+  ];
+  let apiFailed = false;
+  for (const api of apis) {
+    const ok = run(`gcloud services enable ${api}`, { ignoreError: true });
+    if (!ok) {
+      console.error(`  警告: ${api} の有効化に失敗しました。権限を確認してください。`);
+      apiFailed = true;
+    }
+  }
+  if (apiFailed) {
+    console.log("");
+    console.log("一部のAPIの有効化に失敗しました。");
+    console.log("プロジェクトのオーナーまたは編集者の権限が必要です。");
+    console.log("権限のあるアカウントで再度実行するか、GCPコンソールから手動で有効化してください。");
+    const cont = await prompt("このまま続行しますか？ (y/N): ");
+    if (cont !== "y" && cont !== "Y") {
+      console.log("中止しました");
+      process.exit(1);
+    }
+  }
 
   // === Artifact Registry リポジトリ作成 ===
   console.log(">>> Artifact Registryリポジトリを作成中...");
-  try {
-    run(
-      `gcloud artifacts repositories create docker-repo --repository-format=docker --location=${region} --description="Docker images for rinri member system"`
-    );
-  } catch {
-    console.log("  (既に存在します)");
+  if (!run(
+    `gcloud artifacts repositories create docker-repo --repository-format=docker --location=${region} --description="Docker images for rinri member system"`,
+    { ignoreError: true }
+  )) {
+    console.log("  (既に存在するか、権限がありません)");
   }
 
   // === サービスアカウント作成 ===
@@ -77,16 +110,12 @@ async function main() {
   const saEmail = `${saName}@${projectId}.iam.gserviceaccount.com`;
 
   console.log(">>> サービスアカウントを作成中...");
-  try {
-    run(
-      `gcloud iam service-accounts create ${saName} --display-name="Rinri Member System Service Account"`
-    );
-  } catch {
-    console.log("  (既に存在します)");
+  if (!run(
+    `gcloud iam service-accounts create ${saName} --display-name="Rinri Member System Service Account"`,
+    { ignoreError: true }
+  )) {
+    console.log("  (既に存在するか、権限がありません)");
   }
-
-  // === 権限付与 ===
-  console.log(">>> 権限を付与中...");
 
   console.log("");
   console.log("==========================================");
@@ -137,6 +166,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error("");
+  console.error("セットアップが中断されました。エラー内容を確認して再度実行してください。");
   process.exit(1);
 });

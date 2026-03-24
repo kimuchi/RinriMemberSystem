@@ -1,0 +1,142 @@
+.settings-page { max-width: 900px; }
+
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: var(--space-lg);
+  border-bottom: 2px solid var(--color-border-light);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.65rem 1rem;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.settings-tab:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.settings-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.settings-section-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.settings-help {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-lg);
+  line-height: 1.7;
+}
+
+/* Option List (shared by statuses, event types, custom field options) */
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: var(--space-md);
+}
+
+.option-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.5rem 0.75rem;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.option-item:hover {
+  background: var(--color-primary-bg);
+}
+
+.option-order {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  min-width: 24px;
+  text-align: center;
+}
+
+.option-name {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.add-option-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/* Custom Field Items */
+.cf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.cf-item {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.cf-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  background: var(--color-bg);
+  transition: background var(--transition-fast);
+}
+
+.cf-item-header:hover {
+  background: var(--color-primary-bg);
+}
+
+.cf-item-name {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.cf-item-body {
+  padding: var(--space-md);
+  border-top: 1px solid var(--color-border-light);
+}
+
+@media (max-width: 768px) {
+  .settings-tabs {
+    gap: 0;
+  }
+  .settings-tab {
+    padding: 0.5rem 0.75rem;
+    font-size: var(--font-size-xs);
+  }
+  .settings-tab span {
+    /* Show only icon on very small screens */
+  }
+  .add-option-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

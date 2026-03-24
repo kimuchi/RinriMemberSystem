@@ -5,6 +5,7 @@
 // ============================================================
 
 const { execSync } = require("child_process");
+const crypto = require("crypto");
 const readline = require("readline");
 
 function run(cmd, { ignoreError = false } = {}) {
@@ -139,20 +140,23 @@ async function main() {
   console.log("3. Cloud Run にシークレット環境変数を設定");
   console.log("   以下のコマンドでシークレットを作成:");
   console.log("");
+  const jwtSecret = crypto.randomBytes(32).toString("hex");
+  console.log(`   JWT_SECRET を自動生成しました: ${jwtSecret}`);
+  console.log("");
   const isWindows = process.platform === "win32";
   if (isWindows) {
     console.log("   【PowerShell の場合】");
     console.log('   "YOUR_CLIENT_ID" | gcloud secrets create GOOGLE_CLIENT_ID --data-file=-');
     console.log('   "YOUR_CLIENT_SECRET" | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-');
     console.log('   "YOUR_SPREADSHEET_ID" | gcloud secrets create SPREADSHEET_ID --data-file=-');
-    console.log('   "YOUR_JWT_SECRET" | gcloud secrets create JWT_SECRET --data-file=-');
+    console.log(`   "${jwtSecret}" | gcloud secrets create JWT_SECRET --data-file=-`);
     console.log(`   "https://${customDomain}/auth/callback" | gcloud secrets create REDIRECT_URI --data-file=-`);
     console.log("");
     console.log("   【コマンドプロンプト(cmd.exe)の場合】");
     console.log("   echo YOUR_CLIENT_ID| gcloud secrets create GOOGLE_CLIENT_ID --data-file=-");
     console.log("   echo YOUR_CLIENT_SECRET| gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-");
     console.log("   echo YOUR_SPREADSHEET_ID| gcloud secrets create SPREADSHEET_ID --data-file=-");
-    console.log("   echo YOUR_JWT_SECRET| gcloud secrets create JWT_SECRET --data-file=-");
+    console.log(`   echo ${jwtSecret}| gcloud secrets create JWT_SECRET --data-file=-`);
     console.log(`   echo https://${customDomain}/auth/callback| gcloud secrets create REDIRECT_URI --data-file=-`);
     console.log("");
     console.log("   ※ cmd.exe では echo と | の間にスペースを入れないでください（値に含まれます）");
@@ -161,7 +165,7 @@ async function main() {
     console.log("   echo -n 'YOUR_CLIENT_ID' | gcloud secrets create GOOGLE_CLIENT_ID --data-file=-");
     console.log("   echo -n 'YOUR_CLIENT_SECRET' | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-");
     console.log("   echo -n 'YOUR_SPREADSHEET_ID' | gcloud secrets create SPREADSHEET_ID --data-file=-");
-    console.log("   echo -n 'YOUR_JWT_SECRET' | gcloud secrets create JWT_SECRET --data-file=-");
+    console.log(`   echo -n '${jwtSecret}' | gcloud secrets create JWT_SECRET --data-file=-`);
     console.log(`   echo -n 'https://${customDomain}/auth/callback' | gcloud secrets create REDIRECT_URI --data-file=-`);
   }
   console.log("");

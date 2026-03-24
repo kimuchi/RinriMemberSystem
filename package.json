@@ -9,7 +9,9 @@
     "build:client": "cd client && npm run build",
     "install:all": "npm install && cd client && npm install",
     "deploy:cloudrun": "bash scripts/deploy-cloudrun.sh",
-    "deploy:init": "bash scripts/init-gcp.sh"
+    "deploy:cloudrun:win": "powershell -ExecutionPolicy Bypass -File scripts/deploy-cloudrun.ps1",
+    "deploy:init": "bash scripts/init-gcp.sh",
+    "deploy:init:win": "powershell -ExecutionPolicy Bypass -File scripts/init-gcp.ps1"
   },
   "dependencies": {
     "express": "^4.18.2",

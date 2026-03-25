@@ -16,6 +16,47 @@ const BASE_FIELDS = {
 };
 
 /**
+ * スプレッドシートで直接追加された行のID・登録日・更新日を自動補完
+ * 空欄の場合のみ補完し、シートに書き戻す
+ */
+async function autoFillMembers(data) {
+  const now = new Date().toISOString();
+  const updates = [];
+
+  for (const m of data) {
+    const fills = {};
+    if (!m['ID']) {
+      fills['ID'] = sheets.generateId();
+      m['ID'] = fills['ID'];
+    }
+    if (!m['登録日']) {
+      fills['登録日'] = now;
+      m['登録日'] = fills['登録日'];
+    }
+    if (!m['更新日']) {
+      fills['更新日'] = now;
+      m['更新日'] = fills['更新日'];
+    }
+    if (Object.keys(fills).length > 0) {
+      updates.push({ rowIndex: m._rowIndex, fills });
+    }
+  }
+
+  // バックグラウンドでシートに書き戻す（レスポンスをブロックしない）
+  if (updates.length > 0) {
+    Promise.all(
+      updates.flatMap(({ rowIndex, fills }) =>
+        Object.entries(fills).map(([col, val]) =>
+          sheets.updateCell('会員名簿', rowIndex, col, val)
+        )
+      )
+    ).catch(err => console.error('Auto-fill write-back error:', err));
+  }
+
+  return data;
+}
+
+/**
  * 会員データをAPIレスポンス形式に変換（カスタムフィールド含む）
  */
 function formatMember(m, customFields) {
@@ -48,6 +89,7 @@ function formatMember(m, customFields) {
 router.get('/', async (req, res) => {
   try {
     const { data } = await sheets.getSheetData('会員名簿');
+    await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
     const members = data.map(m => formatMember(m, customFields));
     res.json({ members, customFields });
@@ -63,6 +105,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { data } = await sheets.getSheetData('会員名簿');
+    await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
     const member = data.find(m => m['ID'] === req.params.id);
     if (!member) return res.status(404).json({ error: '会員が見つかりません' });

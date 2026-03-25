@@ -36,6 +36,9 @@ export default function FormImport({ eventId, onImported }) {
   // 既存会員の登録チェック（デフォルトON）
   const [matchedChecked, setMatchedChecked] = useState(new Set());
 
+  // 重複回答の選択（duplicateGroup → 選択したformRow）
+  const [dupSelection, setDupSelection] = useState({});
+
   // 新規会員登録（未照合）
   const [newMemberChecked, setNewMemberChecked] = useState(new Set());
   const [newMemberEdits, setNewMemberEdits] = useState({});
@@ -146,6 +149,7 @@ export default function FormImport({ eventId, onImported }) {
     setDiffResolutions({});
     setNewMemberChecked(new Set());
     setNewMemberEdits({});
+    setDupSelection({});
     try {
       const res = await api.previewFormImport(eventId);
       setPreview(res);
@@ -161,11 +165,26 @@ export default function FormImport({ eventId, onImported }) {
         }
       }
       setDiffResolutions(defaults);
-      // デフォルトで照合済み（未登録）を全員チェック
+      // 重複グループのデフォルト選択（最後の回答を採用）
+      const dupDefaults = {};
+      for (const entry of res.entries) {
+        if (entry.duplicateGroup) {
+          dupDefaults[entry.duplicateGroup] = entry.formRow; // 後の方が上書き
+        }
+      }
+      setDupSelection(dupDefaults);
+
+      // デフォルトで照合済み（未登録）を全員チェック（重複は選択された方のみ）
       const checkedSet = new Set();
       for (const entry of res.entries) {
         if (entry.matched && !entry.alreadyRegistered) {
-          checkedSet.add(entry.formRow);
+          if (entry.duplicateGroup) {
+            if (dupDefaults[entry.duplicateGroup] === entry.formRow) {
+              checkedSet.add(entry.formRow);
+            }
+          } else {
+            checkedSet.add(entry.formRow);
+          }
         }
       }
       setMatchedChecked(checkedSet);
@@ -457,12 +476,30 @@ export default function FormImport({ eventId, onImported }) {
   function renderPreview() {
     if (!preview) return null;
 
-    const matched = preview.entries.filter(e => e.matched && !e.alreadyRegistered && !e.isDuplicate);
-    const duplicates = preview.entries.filter(e => e.isDuplicate);
+    const matched = preview.entries.filter(e => e.matched && !e.alreadyRegistered);
     const alreadyReg = preview.entries.filter(e => e.alreadyRegistered);
-    const unmatched = preview.entries.filter(e => !e.matched && !e.isDuplicate);
-    const withDiffs = matched.filter(e => e.diffs.length > 0);
-    const checkedMatched = matched.filter(e => matchedChecked.has(e.formRow));
+    const unmatched = preview.entries.filter(e => !e.matched);
+
+    // 重複グループを構築
+    const dupGroups = {};
+    preview.entries.forEach(e => {
+      if (e.duplicateGroup) {
+        if (!dupGroups[e.duplicateGroup]) dupGroups[e.duplicateGroup] = [];
+        dupGroups[e.duplicateGroup].push(e);
+      }
+    });
+    const hasDuplicates = Object.keys(dupGroups).length > 0;
+
+    // 重複でないか、重複グループで選択された方のみ表示
+    const uniqueMatched = matched.filter(e =>
+      !e.duplicateGroup || dupSelection[e.duplicateGroup] === e.formRow
+    );
+    const uniqueUnmatched = unmatched.filter(e =>
+      !e.duplicateGroup || dupSelection[e.duplicateGroup] === e.formRow
+    );
+
+    const withDiffs = uniqueMatched.filter(e => e.diffs.length > 0);
+    const checkedMatched = uniqueMatched.filter(e => matchedChecked.has(e.formRow));
 
     return (
       <div className="form-preview">
@@ -484,37 +521,79 @@ export default function FormImport({ eventId, onImported }) {
             <span className="summary-count">{preview.skipCount}</span>
             <span>名不参加</span>
           </div>
-          {duplicates.length > 0 && (
+          {hasDuplicates && (
             <div className="summary-item">
-              <span className="summary-count">{duplicates.length}</span>
-              <span>件重複</span>
+              <span className="summary-count">{Object.keys(dupGroups).length}</span>
+              <span>名重複</span>
             </div>
           )}
         </div>
 
+        {/* 重複回答の選択 */}
+        {hasDuplicates && (
+          <div style={{ marginBottom: 'var(--space-md)' }}>
+            <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-warning)' }}>
+              <Icon name="content_copy" size={16} /> 重複回答（{Object.keys(dupGroups).length}名）
+            </h3>
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
+              同一人物の複数回答があります。採用する回答を選択してください（デフォルト: 最新の回答）。
+            </p>
+            {Object.entries(dupGroups).map(([group, groupEntries]) => (
+              <div key={group} className="diff-card" style={{ marginBottom: 'var(--space-sm)' }}>
+                <div className="diff-card-header">{groupEntries[0].formName}（{groupEntries.length}件）</div>
+                <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+                  {groupEntries.map(e => (
+                    <label key={e.formRow} className="diff-option" style={{ display: 'flex', gap: 'var(--space-sm)', padding: '4px 0', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name={`dup-${group}`}
+                        checked={dupSelection[group] === e.formRow}
+                        onChange={() => {
+                          setDupSelection(prev => ({ ...prev, [group]: e.formRow }));
+                          // チェック状態も切り替え
+                          setMatchedChecked(prev => {
+                            const next = new Set(prev);
+                            groupEntries.forEach(ge => next.delete(ge.formRow));
+                            next.add(e.formRow);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span style={{ fontSize: 'var(--font-size-sm)' }}>
+                        行{e.formRow}
+                        {e.participationType && ` (${e.participationType})`}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* 照合済み一覧（チェックで登録/除外） */}
-        {matched.length > 0 && (
+        {uniqueMatched.length > 0 && (
           <div style={{ marginBottom: 'var(--space-md)' }}>
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>
-              <Icon name="people" size={16} /> 名簿と照合済み（{matched.length}名）
+              <Icon name="people" size={16} /> 名簿と照合済み（{uniqueMatched.length}名）
             </h3>
             <div className="bulk-list" style={{ maxHeight: 200 }}>
               <label className="bulk-check-item" style={{ fontWeight: 600, borderBottom: '1px solid var(--color-border)' }}>
                 <input
                   type="checkbox"
-                  checked={matched.length > 0 && matched.every(e => matchedChecked.has(e.formRow))}
+                  checked={uniqueMatched.length > 0 && uniqueMatched.every(e => matchedChecked.has(e.formRow))}
                   onChange={() => {
-                    const allChecked = matched.every(e => matchedChecked.has(e.formRow));
+                    const allChecked = uniqueMatched.every(e => matchedChecked.has(e.formRow));
                     setMatchedChecked(prev => {
                       const next = new Set(prev);
-                      matched.forEach(e => allChecked ? next.delete(e.formRow) : next.add(e.formRow));
+                      uniqueMatched.forEach(e => allChecked ? next.delete(e.formRow) : next.add(e.formRow));
                       return next;
                     });
                   }}
                 />
                 <span>全員選択</span>
               </label>
-              {matched.map(e => (
+              {uniqueMatched.map(e => (
                 <label key={e.formRow} className="bulk-check-item">
                   <input
                     type="checkbox"
@@ -532,22 +611,6 @@ export default function FormImport({ eventId, onImported }) {
                   {e.participationType && <span className="badge badge-primary" style={{ fontSize: 'var(--font-size-xs)' }}>{e.participationType}</span>}
                   {e.diffs.length > 0 && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning)' }}>差異あり</span>}
                 </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 重複回答 */}
-        {duplicates.length > 0 && (
-          <div style={{ marginBottom: 'var(--space-md)' }}>
-            <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-warning)' }}>
-              <Icon name="content_copy" size={16} /> 重複回答（{duplicates.length}件 - 後の回答をスキップ）
-            </h3>
-            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-              {duplicates.map(e => (
-                <div key={e.formRow} style={{ padding: '4px 0' }}>
-                  {e.formName} {e.participationType && `(${e.participationType})`}
-                </div>
               ))}
             </div>
           </div>
@@ -621,15 +684,15 @@ export default function FormImport({ eventId, onImported }) {
         )}
 
         {/* 未照合一覧 → 名簿に新規追加 */}
-        {unmatched.length > 0 && (
+        {uniqueUnmatched.length > 0 && (
           <div style={{ marginTop: 'var(--space-md)' }}>
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-warning)' }}>
-              <Icon name="person_add" size={16} /> 名簿に見つからなかった回答（{unmatched.length}件）
+              <Icon name="person_add" size={16} /> 名簿に見つからなかった回答（{uniqueUnmatched.length}件）
             </h3>
             <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
               チェックを入れると会員名簿に新規追加し、出席登録します。
             </p>
-            {unmatched.map(e => {
+            {uniqueUnmatched.map(e => {
               const checked = newMemberChecked.has(e.formRow);
               const edits = newMemberEdits[e.formRow] || {};
               return (

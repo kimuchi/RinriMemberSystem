@@ -270,11 +270,14 @@ router.post('/preview', async (req, res) => {
         }
       }
 
-      // 重複検出
-      const isDuplicate = normalizedFormName && seenNames[normalizedFormName] !== undefined;
-      const duplicateOf = isDuplicate ? seenNames[normalizedFormName] : null;
-      if (normalizedFormName && !isDuplicate) {
-        seenNames[normalizedFormName] = row._rowIndex;
+      // 重複検出（同一名の回答グループを記録）
+      let duplicateGroup = null;
+      if (normalizedFormName) {
+        if (seenNames[normalizedFormName] !== undefined) {
+          duplicateGroup = normalizedFormName;
+        } else {
+          seenNames[normalizedFormName] = row._rowIndex;
+        }
       }
 
       entries.push({
@@ -286,11 +289,18 @@ router.post('/preview', async (req, res) => {
         memberName: member ? member['氏名'] : null,
         participationType,
         alreadyRegistered: member ? registeredMemberIds.has(member['ID']) : false,
-        isDuplicate,
-        duplicateOf,
+        duplicateGroup,
         diffs,
         mappedFormData,
       });
+    }
+
+    // 先の回答にもduplicateGroupを付与
+    const dupNames = new Set(entries.filter(e => e.duplicateGroup).map(e => e.duplicateGroup));
+    for (const entry of entries) {
+      if (!entry.duplicateGroup && dupNames.has(entry.normalizedName)) {
+        entry.duplicateGroup = entry.normalizedName;
+      }
     }
 
     res.json({

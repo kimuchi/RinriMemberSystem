@@ -93,28 +93,30 @@ class SheetsService {
     return { headers, headerMap };
   }
 
-  async appendRow(sheetName, rowData) {
-    await this.init();
-    const { headers } = await this.getSheetData(sheetName);
-    const row = headers.map(h => rowData[h] || '');
-    console.log(`appendRow(${sheetName}): headers=${headers.length}, row=${JSON.stringify(row)}`);
-
-    await this.sheets.spreadsheets.values.append({
+  /**
+   * シートの実際の行数をAPIから直接取得（キャッシュ不使用）
+   */
+  async _getActualRowCount(sheetName) {
+    const res = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${sheetName}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [row] },
+      range: `${sheetName}!A:A`,
     });
-    this.invalidateCache(sheetName);
+    return (res.data.values || []).length;
+  }
+
+  async appendRow(sheetName, rowData) {
+    await this.appendRows(sheetName, [rowData]);
   }
 
   async appendRows(sheetName, rowDataArray) {
     if (!rowDataArray || rowDataArray.length === 0) return;
     await this.init();
-    const { headers, data } = await this.getSheetData(sheetName);
+    const { headers } = await this.getSheetData(sheetName);
     const rows = rowDataArray.map(rowData => headers.map(h => rowData[h] || ''));
-    const startRow = data.length + 2; // ヘッダー(1行目) + 既存データ行数 + 1
+
+    // キャッシュではなくAPIから直接最終行を取得
+    const actualRows = await this._getActualRowCount(sheetName);
+    const startRow = actualRows + 1;
     console.log(`appendRows(${sheetName}): ${rows.length} rows at row ${startRow}`);
 
     await this.sheets.spreadsheets.values.update({

@@ -8,10 +8,14 @@ const { execSync } = require("child_process");
 const crypto = require("crypto");
 const readline = require("readline");
 
-function run(cmd, { ignoreError = false } = {}) {
+function run(cmd, { ignoreError = false, input } = {}) {
   console.log(`>>> ${cmd}`);
   try {
-    execSync(cmd, { stdio: "inherit" });
+    if (input !== undefined) {
+      execSync(cmd, { stdio: ["pipe", "inherit", "inherit"], input });
+    } else {
+      execSync(cmd, { stdio: "inherit" });
+    }
   } catch (e) {
     if (ignoreError) {
       return false;
@@ -21,6 +25,10 @@ function run(cmd, { ignoreError = false } = {}) {
     throw e;
   }
   return true;
+}
+
+function getOutput(cmd) {
+  return execSync(cmd, { encoding: "utf8" }).trim();
 }
 
 function prompt(question) {
@@ -118,92 +126,108 @@ async function main() {
     console.log("  (既に存在するか、権限がありません)");
   }
 
+  // === Secret Manager API を有効化 ===
+  console.log(">>> Secret Manager APIを有効化中...");
+  run("gcloud services enable secretmanager.googleapis.com", { ignoreError: true });
+
+  // === シークレット環境変数の設定 ===
   console.log("");
   console.log("==========================================");
-  console.log(" 手動セットアップが必要な項目");
+  console.log(" シークレット環境変数の設定");
   console.log("==========================================");
   console.log("");
-  console.log("1. Googleスプレッドシートの作成");
-  console.log("   - 新しいスプレッドシートを作成してください");
-  console.log("   - URLからスプレッドシートIDをコピー");
-  console.log(`   - サービスアカウント (${saEmail}) に`);
-  console.log("     編集権限を付与してください");
+  console.log("先にGoogle Cloud Console で以下を準備してください:");
+  console.log("  - OAuth 2.0 クレデンシャル (APIs & Services → Credentials)");
+  console.log("    アプリケーションの種類: ウェブアプリケーション");
+  console.log(`    承認済みリダイレクトURI: https://${customDomain}/auth/callback`);
+  console.log("  - Googleスプレッドシート (URLからIDをコピー)");
+  console.log(`    サービスアカウント (${saEmail}) に編集権限を付与`);
   console.log("");
-  console.log("2. Google OAuth 2.0 クレデンシャルの作成");
-  console.log("   - Google Cloud Console → APIs & Services → Credentials");
-  console.log("   - 「認証情報を作成」→「OAuthクライアントID」");
-  console.log("   - アプリケーションの種類: ウェブアプリケーション");
-  console.log("   - 承認済みリダイレクトURI:");
-  console.log(`     https://${customDomain}/auth/callback`);
-  console.log("   - クライアントIDとシークレットをメモ");
-  console.log("");
-  console.log("3. Cloud Run にシークレット環境変数を設定");
-  console.log("   以下のコマンドでシークレットを作成:");
-  console.log("");
-  const jwtSecret = crypto.randomBytes(32).toString("hex");
-  console.log(`   JWT_SECRET を自動生成しました: ${jwtSecret}`);
-  console.log("");
-  const isWindows = process.platform === "win32";
-  if (isWindows) {
-    console.log("   【PowerShell の場合】");
-    console.log('   "YOUR_CLIENT_ID" | gcloud secrets create GOOGLE_CLIENT_ID --data-file=-');
-    console.log('   "YOUR_CLIENT_SECRET" | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-');
-    console.log('   "YOUR_SPREADSHEET_ID" | gcloud secrets create SPREADSHEET_ID --data-file=-');
-    console.log(`   "${jwtSecret}" | gcloud secrets create JWT_SECRET --data-file=-`);
-    console.log(`   "https://${customDomain}/auth/callback" | gcloud secrets create REDIRECT_URI --data-file=-`);
+
+  const setupSecrets = await prompt("シークレットを今すぐ設定しますか？ (y/N): ");
+  if (setupSecrets === "y" || setupSecrets === "Y") {
+    const googleClientId = await prompt("Google OAuth クライアントID: ");
+    const googleClientSecret = await prompt("Google OAuth クライアントシークレット: ");
+    const spreadsheetId = await prompt("スプレッドシートID: ");
+    const jwtSecret = crypto.randomBytes(32).toString("hex");
+    const redirectUri = `https://${customDomain}/auth/callback`;
+
     console.log("");
-    console.log("   【コマンドプロンプト(cmd.exe)の場合】");
-    console.log("   echo YOUR_CLIENT_ID| gcloud secrets create GOOGLE_CLIENT_ID --data-file=-");
-    console.log("   echo YOUR_CLIENT_SECRET| gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-");
-    console.log("   echo YOUR_SPREADSHEET_ID| gcloud secrets create SPREADSHEET_ID --data-file=-");
-    console.log(`   echo ${jwtSecret}| gcloud secrets create JWT_SECRET --data-file=-`);
-    console.log(`   echo https://${customDomain}/auth/callback| gcloud secrets create REDIRECT_URI --data-file=-`);
+    console.log(`  JWT_SECRET を自動生成しました: ${jwtSecret}`);
+    console.log(`  REDIRECT_URI: ${redirectUri}`);
     console.log("");
-    console.log("   ※ cmd.exe では echo と | の間にスペースを入れないでください（値に含まれます）");
-    console.log("   ※ GCPコンソールの Secret Manager 画面からGUIで作成することもできます");
+
+    const secretEntries = [
+      { name: "GOOGLE_CLIENT_ID", value: googleClientId },
+      { name: "GOOGLE_CLIENT_SECRET", value: googleClientSecret },
+      { name: "SPREADSHEET_ID", value: spreadsheetId },
+      { name: "JWT_SECRET", value: jwtSecret },
+      { name: "REDIRECT_URI", value: redirectUri },
+    ];
+
+    // シークレット作成
+    for (const { name, value } of secretEntries) {
+      if (!value) {
+        console.log(`  スキップ: ${name} (値が空です)`);
+        continue;
+      }
+      console.log(`>>> シークレット ${name} を作成中...`);
+      // 既存のシークレットがあれば新しいバージョンを追加、なければ作成
+      const created = run(
+        `gcloud secrets create ${name} --data-file=- --project=${projectId}`,
+        { ignoreError: true, input: value }
+      );
+      if (!created) {
+        console.log(`  ${name} は既に存在します。新しいバージョンを追加します...`);
+        run(
+          `gcloud secrets versions add ${name} --data-file=- --project=${projectId}`,
+          { ignoreError: true, input: value }
+        );
+      }
+    }
+
+    // IAM権限付与
+    console.log("");
+    console.log(">>> シークレットへのアクセス権限を付与中...");
+    let projectNumber;
+    try {
+      projectNumber = getOutput(
+        `gcloud projects describe ${projectId} --format="value(projectNumber)"`
+      );
+    } catch {
+      console.error("  警告: プロジェクト番号の取得に失敗しました。");
+    }
+
+    if (projectNumber) {
+      const computeSa = `${projectNumber}-compute@developer.gserviceaccount.com`;
+      for (const { name } of secretEntries) {
+        run(
+          `gcloud secrets add-iam-policy-binding ${name} --member="serviceAccount:${computeSa}" --role="roles/secretmanager.secretAccessor" --project=${projectId}`,
+          { ignoreError: true }
+        );
+      }
+      console.log("  シークレットの権限付与が完了しました。");
+    }
   } else {
-    console.log("   echo -n 'YOUR_CLIENT_ID' | gcloud secrets create GOOGLE_CLIENT_ID --data-file=-");
-    console.log("   echo -n 'YOUR_CLIENT_SECRET' | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-");
-    console.log("   echo -n 'YOUR_SPREADSHEET_ID' | gcloud secrets create SPREADSHEET_ID --data-file=-");
-    console.log(`   echo -n '${jwtSecret}' | gcloud secrets create JWT_SECRET --data-file=-`);
-    console.log(`   echo -n 'https://${customDomain}/auth/callback' | gcloud secrets create REDIRECT_URI --data-file=-`);
-  }
-  console.log("");
-  console.log("   シークレットへのアクセス権限を付与:");
-  console.log("");
-  const secrets = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SPREADSHEET_ID", "JWT_SECRET", "REDIRECT_URI"];
-  if (isWindows) {
-    console.log("   【PowerShell の場合】");
-    console.log(`   $PROJECT_NUMBER = (gcloud projects describe ${projectId} --format="value(projectNumber)")`);
-    console.log('   foreach ($SECRET in @("' + secrets.join('","') + '")) {');
-    console.log("     gcloud secrets add-iam-policy-binding $SECRET ``");
-    console.log('       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" ``');
-    console.log('       --role="roles/secretmanager.secretAccessor"');
-    console.log("   }");
     console.log("");
-    console.log("   【コマンドプロンプト(cmd.exe)の場合】");
-    console.log(`   for /F "tokens=*" %N in ('gcloud projects describe ${projectId} --format="value(projectNumber)"') do set PROJECT_NUMBER=%N`);
-    console.log("   for %S in (" + secrets.join(" ") + ") do gcloud secrets add-iam-policy-binding %S --member=\"serviceAccount:%PROJECT_NUMBER%-compute@developer.gserviceaccount.com\" --role=\"roles/secretmanager.secretAccessor\"");
-    console.log("");
-    console.log("   ※ バッチファイル(.bat)内では %N → %%N, %S → %%S に変更してください");
-  } else {
-    console.log(`   PROJECT_NUMBER=$(gcloud projects describe ${projectId} --format='value(projectNumber)')`);
-    console.log("   for SECRET in " + secrets.join(" ") + "; do");
-    console.log("     gcloud secrets add-iam-policy-binding $SECRET \\");
-    console.log('       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \\');
-    console.log('       --role="roles/secretmanager.secretAccessor"');
-    console.log("   done");
+    console.log("後でシークレットを設定する場合は、このスクリプトを再度実行してください。");
   }
+
+  // === 残りの手動セットアップ ===
   console.log("");
-  console.log("4. 独自ドメインの設定");
+  console.log("==========================================");
+  console.log(" 残りのセットアップ");
+  console.log("==========================================");
+  console.log("");
+  console.log("1. 独自ドメインの設定");
   console.log("   - Cloud Run コンソールでカスタムドメインマッピングを設定");
   console.log(`   - DNSにCNAMEレコードを追加: ${customDomain} → ghs.googlehosted.com`);
   console.log("");
-  console.log("5. デプロイ");
+  console.log("2. デプロイ");
   console.log("   npm run deploy:cloudrun");
   console.log("");
   console.log("==========================================");
-  console.log(" セットアップの基本部分が完了しました");
+  console.log(" セットアップが完了しました");
   console.log("==========================================");
 }
 

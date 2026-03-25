@@ -12,6 +12,18 @@ const REDIRECT_URI = (process.env.REDIRECT_URI || 'https://localhost:8080/auth/c
 const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI);
 
 /**
+ * GET /auth/public-info - 認証不要の公開情報（単会名など）
+ */
+router.get('/public-info', async (req, res) => {
+  try {
+    const unitName = await sheets.getSetting('単会名');
+    res.json({ unitName: unitName || null });
+  } catch {
+    res.json({ unitName: null });
+  }
+});
+
+/**
  * GET /auth/login - Google OAuth開始
  */
 router.get('/login', (req, res) => {

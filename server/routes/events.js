@@ -1,6 +1,10 @@
 const express = require('express');
 const sheets = require('../services/sheets');
+const formImportRouter = require('./form-import');
 const router = express.Router();
+
+// フォーム連携サブルーター
+router.use('/:id/form', formImportRouter);
 
 /**
  * GET /api/events - イベント一覧

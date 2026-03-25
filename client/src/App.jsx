@@ -43,6 +43,9 @@ export default function App() {
       const data = await api.getMe();
       setUser(data.user);
       setUnitName(data.unitName);
+      if (data.unitName) {
+        document.title = `${data.unitName} 会員管理システム`;
+      }
     } catch {
       setUser(null);
     } finally {
@@ -65,7 +68,7 @@ export default function App() {
 
   // 初回セットアップ（単会名未設定）
   if (!unitName) {
-    return <SetupPage user={user} onComplete={(name) => setUnitName(name)} />;
+    return <SetupPage user={user} onComplete={(name) => { setUnitName(name); document.title = `${name} 会員管理システム`; }} />;
   }
 
   return (

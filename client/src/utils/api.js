@@ -18,6 +18,7 @@ async function apiFetch(url, options = {}) {
 export const api = {
   // Auth
   getMe: () => apiFetch('/auth/me'),
+  getPublicInfo: () => apiFetch('/auth/public-info'),
   setup: (unitName) => apiFetch('/auth/setup', { method: 'POST', body: JSON.stringify({ unitName }) }),
 
   // Dashboard
@@ -47,6 +48,19 @@ export const api = {
   deleteAttendance: (eventId, attId) =>
     apiFetch(`/api/events/${eventId}/attendance/${attId}`, { method: 'DELETE' }),
   getEventTypes: () => apiFetch('/api/events/types'),
+
+  // Form Import
+  getFormConfig: (eventId) => apiFetch(`/api/events/${eventId}/form`),
+  connectForm: (eventId, spreadsheetId, sheetName) =>
+    apiFetch(`/api/events/${eventId}/form/connect`, { method: 'POST', body: JSON.stringify({ spreadsheetId, sheetName }) }),
+  saveFormMapping: (eventId, data) =>
+    apiFetch(`/api/events/${eventId}/form/mapping`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteFormLink: (eventId) =>
+    apiFetch(`/api/events/${eventId}/form`, { method: 'DELETE' }),
+  previewFormImport: (eventId) =>
+    apiFetch(`/api/events/${eventId}/form/preview`, { method: 'POST' }),
+  executeFormImport: (eventId, entries) =>
+    apiFetch(`/api/events/${eventId}/form/execute`, { method: 'POST', body: JSON.stringify({ entries }) }),
 
   // Settings
   getUsers: () => apiFetch('/api/settings/users'),

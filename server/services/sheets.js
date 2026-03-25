@@ -316,6 +316,99 @@ class SheetsService {
     return true;
   }
 
+  // ============ External Spreadsheet Access ============
+
+  /**
+   * 外部スプレッドシートのシート名一覧を取得
+   */
+  async getExternalSheetNames(spreadsheetId) {
+    await this.init();
+    try {
+      const res = await this.sheets.spreadsheets.get({ spreadsheetId });
+      return res.data.sheets.map(s => s.properties.title);
+    } catch (err) {
+      if (err.code === 403 || err.code === 404) {
+        const email = await this.getServiceAccountEmail();
+        throw new Error(
+          `スプレッドシートにアクセスできません。以下のサービスアカウントにスプレッドシートの共有（閲覧者以上）を設定してください: ${email}`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 外部スプレッドシートのデータを取得
+   */
+  async getExternalSheetData(spreadsheetId, sheetName) {
+    await this.init();
+    try {
+      const res = await this.sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:ZZ`,
+      });
+      const rows = res.data.values || [];
+      if (rows.length === 0) return { headers: [], data: [] };
+
+      const headers = rows[0];
+      const data = rows.slice(1).map((row, i) => {
+        const obj = { _rowIndex: i + 2 };
+        headers.forEach((h, j) => { obj[h] = row[j] || ''; });
+        return obj;
+      });
+      return { headers, data };
+    } catch (err) {
+      if (err.code === 403 || err.code === 404) {
+        const email = await this.getServiceAccountEmail();
+        throw new Error(
+          `スプレッドシートにアクセスできません。以下のサービスアカウントにスプレッドシートの共有（閲覧者以上）を設定してください: ${email}`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * サービスアカウントのメールアドレスを取得
+   */
+  async getServiceAccountEmail() {
+    await this.init();
+    const auth = new google.auth.GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const client = await auth.getClient();
+    return client.email || '(不明 - 環境変数を確認してください)';
+  }
+
+  /**
+   * シートが存在しなければ作成する
+   */
+  async ensureSheet(sheetName, headers) {
+    await this.init();
+    const spreadsheet = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+    });
+    const exists = spreadsheet.data.sheets.some(s => s.properties.title === sheetName);
+    if (!exists) {
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: sheetName } } }],
+        },
+      });
+    }
+    const { headers: existing } = await this.getSheetData(sheetName);
+    if (existing.length === 0) {
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+      this.invalidateCache(sheetName);
+    }
+  }
+
   // ============ Drive Permissions ============
 
   async shareWithUser(email, role = 'writer') {

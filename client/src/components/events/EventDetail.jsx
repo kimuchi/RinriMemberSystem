@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../utils/api';
 import { useApp } from '../../App';
 import Icon from '../Icon';
+import FormImport from './FormImport';
 import './Events.css';
 
 export default function EventDetail() {
@@ -230,8 +231,11 @@ export default function EventDetail() {
         </div>
       </div>
 
+      {/* Form Import */}
+      <FormImport eventId={id} onImported={loadData} />
+
       {/* Attendance */}
-      <div className="card">
+      <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
         <div className="card-header">
           <h2 style={{ fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
             出席管理（{attended}/{attendance.length}名 出席）

@@ -1,9 +1,20 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from '../../utils/api';
 import Icon from '../Icon';
 
 export default function LoginPage() {
   const params = new URLSearchParams(window.location.search);
   const error = params.get('error');
+  const [unitName, setUnitName] = useState(null);
+
+  useEffect(() => {
+    api.getPublicInfo().then(res => {
+      if (res.unitName) {
+        setUnitName(res.unitName);
+        document.title = `${res.unitName} 会員管理システム`;
+      }
+    }).catch(() => {});
+  }, []);
 
   return (
     <div style={{
@@ -27,10 +38,10 @@ export default function LoginPage() {
           <Icon name="groups" size={48} className="" />
         </div>
         <h1 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 700, marginBottom: '0.5rem' }}>
-          倫理法人会
+          {unitName || '倫理法人会'}
         </h1>
         <p style={{ color: 'var(--color-text-secondary)', marginBottom: '2rem', fontSize: 'var(--font-size-sm)' }}>
-          単会会員管理システム
+          会員管理システム
         </p>
 
         {error === 'not_registered' && (

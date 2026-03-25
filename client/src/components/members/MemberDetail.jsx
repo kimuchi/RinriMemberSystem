@@ -14,11 +14,12 @@ export default function MemberDetail() {
   const [form, setForm] = useState({
     name: '', furigana: '', email: '', phone: '',
     company: '', address: '', companyPhone: '',
-    memberStatus: '', notes: '', customFields: {},
+    memberStatus: '', notes: '', customFields: {}, extraFields: {},
   });
   const [statuses, setStatuses] = useState([]);
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [cfOptionsMap, setCfOptionsMap] = useState({});
+  const [extraFieldNames, setExtraFieldNames] = useState([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
 
@@ -41,6 +42,7 @@ export default function MemberDetail() {
       if (!isNew) {
         const res = await api.getMember(id);
         const m = res.member;
+        setExtraFieldNames(res.extraFields || []);
         setForm({
           name: m.name || '',
           furigana: m.furigana || '',
@@ -52,7 +54,12 @@ export default function MemberDetail() {
           memberStatus: m.memberStatus || '',
           notes: m.notes || '',
           customFields: m.customFields || {},
+          extraFields: m.extraFields || {},
         });
+      } else {
+        // 新規の場合も追加列名を取得
+        const memberRes = await api.getMembers();
+        setExtraFieldNames(memberRes.extraFields || []);
       }
     } catch (err) {
       toast.error('データの取得に失敗しました');
@@ -69,6 +76,13 @@ export default function MemberDetail() {
     setForm(prev => ({
       ...prev,
       customFields: { ...prev.customFields, [fieldId]: value },
+    }));
+  }
+
+  function handleExtraChange(colName, value) {
+    setForm(prev => ({
+      ...prev,
+      extraFields: { ...prev.extraFields, [colName]: value },
     }));
   }
 
@@ -163,7 +177,7 @@ export default function MemberDetail() {
               </select>
             </div>
 
-            {/* カスタムフィールド */}
+            {/* カスタムフィールド（ドロップダウン） */}
             {customFieldDefs.map(cf => (
               <div className="form-group" key={cf.id}>
                 <label className="form-label">{cf.name}</label>
@@ -175,6 +189,18 @@ export default function MemberDetail() {
                   <option value="">-- 選択してください --</option>
                   {(cfOptionsMap[cf.id] || []).map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
+              </div>
+            ))}
+
+            {/* 追加列（自由文テキスト） */}
+            {extraFieldNames.map(col => (
+              <div className="form-group" key={col}>
+                <label className="form-label">{col}</label>
+                <input
+                  className="form-input"
+                  value={form.extraFields[col] || ''}
+                  onChange={e => handleExtraChange(col, e.target.value)}
+                />
               </div>
             ))}
 

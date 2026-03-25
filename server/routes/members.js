@@ -15,6 +15,22 @@ const BASE_FIELDS = {
   notes: '備考',
 };
 
+// システム管理列（UIに表示しない）
+const SYSTEM_COLUMNS = new Set([
+  'ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
+]);
+
+/**
+ * スプレッドシートのヘッダーから追加列（自由文フィールド）を検出
+ * 基本列・システム列・カスタムフィールド列を除外
+ */
+function detectExtraFields(headers, customFieldNames) {
+  return headers.filter(h =>
+    !SYSTEM_COLUMNS.has(h) && !customFieldNames.includes(h)
+  );
+}
+
 /**
  * スプレッドシートで直接追加された行のID・登録日・更新日を自動補完
  * 空欄の場合のみ補完し、シートに書き戻す
@@ -59,7 +75,7 @@ async function autoFillMembers(data) {
 /**
  * 会員データをAPIレスポンス形式に変換（カスタムフィールド含む）
  */
-function formatMember(m, customFields) {
+function formatMember(m, customFields, extraFields) {
   const result = {
     id: m['ID'],
     name: m['氏名'],
@@ -75,10 +91,15 @@ function formatMember(m, customFields) {
     updatedAt: m['更新日'],
     _rowIndex: m._rowIndex,
     customFields: {},
+    extraFields: {},
   };
-  // カスタムフィールドの値をマッピング
+  // カスタムフィールド（ドロップダウン）の値
   customFields.forEach(cf => {
     result.customFields[cf.id] = m[cf.name] || '';
+  });
+  // 追加列（自由文テキスト）の値
+  extraFields.forEach(col => {
+    result.extraFields[col] = m[col] || '';
   });
   return result;
 }
@@ -88,11 +109,12 @@ function formatMember(m, customFields) {
  */
 router.get('/', async (req, res) => {
   try {
-    const { data } = await sheets.getSheetData('会員名簿');
+    const { headers, data } = await sheets.getSheetData('会員名簿');
     await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
-    const members = data.map(m => formatMember(m, customFields));
-    res.json({ members, customFields });
+    const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
+    const members = data.map(m => formatMember(m, customFields, extraFields));
+    res.json({ members, customFields, extraFields });
   } catch (err) {
     console.error('Get members error:', err);
     res.status(500).json({ error: '会員一覧の取得に失敗しました' });
@@ -104,12 +126,13 @@ router.get('/', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
-    const { data } = await sheets.getSheetData('会員名簿');
+    const { headers, data } = await sheets.getSheetData('会員名簿');
     await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
+    const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
     const member = data.find(m => m['ID'] === req.params.id);
     if (!member) return res.status(404).json({ error: '会員が見つかりません' });
-    res.json({ member: formatMember(member, customFields), customFields });
+    res.json({ member: formatMember(member, customFields, extraFields), customFields, extraFields });
   } catch (err) {
     console.error('Get member error:', err);
     res.status(500).json({ error: '会員情報の取得に失敗しました' });
@@ -134,11 +157,20 @@ router.post('/', async (req, res) => {
       rowData[sheetCol] = req.body[apiKey] || '';
     });
 
-    // カスタムフィールド
+    // カスタムフィールド（ドロップダウン）
     const customFields = await sheets.getCustomFields();
     if (req.body.customFields) {
       customFields.forEach(cf => {
         rowData[cf.name] = req.body.customFields[cf.id] || '';
+      });
+    }
+
+    // 追加列（自由文テキスト）
+    if (req.body.extraFields) {
+      Object.entries(req.body.extraFields).forEach(([col, val]) => {
+        if (!SYSTEM_COLUMNS.has(col)) {
+          rowData[col] = val || '';
+        }
       });
     }
 
@@ -169,12 +201,21 @@ router.put('/:id', async (req, res) => {
       }
     });
 
-    // カスタムフィールド
+    // カスタムフィールド（ドロップダウン）
     const customFields = await sheets.getCustomFields();
     if (req.body.customFields) {
       customFields.forEach(cf => {
         if (req.body.customFields[cf.id] !== undefined) {
           updatedData[cf.name] = req.body.customFields[cf.id];
+        }
+      });
+    }
+
+    // 追加列（自由文テキスト）
+    if (req.body.extraFields) {
+      Object.entries(req.body.extraFields).forEach(([col, val]) => {
+        if (!SYSTEM_COLUMNS.has(col) && val !== undefined) {
+          updatedData[col] = val;
         }
       });
     }

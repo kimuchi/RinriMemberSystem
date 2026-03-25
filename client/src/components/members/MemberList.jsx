@@ -10,6 +10,7 @@ export default function MemberList() {
   const navigate = useNavigate();
   const [members, setMembers] = useState([]);
   const [customFields, setCustomFields] = useState([]);
+  const [extraFields, setExtraFields] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [cfOptionsMap, setCfOptionsMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -30,6 +31,7 @@ export default function MemberList() {
       ]);
       setMembers(memberRes.members);
       setCustomFields(memberRes.customFields || []);
+      setExtraFields(memberRes.extraFields || []);
       setStatuses(statusRes.statuses.map(s => s.name));
       // Build options map for custom fields
       const optMap = {};
@@ -153,12 +155,15 @@ export default function MemberList() {
               {customFields.map(cf => (
                 <th key={cf.id} className="hide-mobile">{cf.name}</th>
               ))}
+              {extraFields.map(col => (
+                <th key={col} className="hide-mobile">{col}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5 + customFields.length} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
+                <td colSpan={5 + customFields.length + extraFields.length} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
                   {search || statusFilter ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
                 </td>
               </tr>
@@ -193,6 +198,11 @@ export default function MemberList() {
                         <option value="">--</option>
                         {(cfOptionsMap[cf.id] || []).map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
+                    </td>
+                  ))}
+                  {extraFields.map(col => (
+                    <td key={col} className="hide-mobile" onClick={() => navigate(`/members/${m.id}`)}>
+                      {m.extraFields[col] || ''}
                     </td>
                   ))}
                 </tr>

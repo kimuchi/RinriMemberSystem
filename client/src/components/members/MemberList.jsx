@@ -158,12 +158,13 @@ export default function MemberList() {
               {extraFields.map(col => (
                 <th key={col} className="hide-mobile">{col}</th>
               ))}
+              <th className="hide-mobile">直近イベント</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5 + customFields.length + extraFields.length} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
+                <td colSpan={6 + customFields.length + extraFields.length} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
                   {search || statusFilter ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
                 </td>
               </tr>
@@ -205,6 +206,18 @@ export default function MemberList() {
                       {m.extraFields[col] || ''}
                     </td>
                   ))}
+                  <td className="hide-mobile" onClick={() => navigate(`/members/${m.id}`)} style={{ fontSize: 'var(--font-size-xs)' }}>
+                    {(m.recentEvents || []).length > 0 ? (
+                      m.recentEvents.map((ev, i) => (
+                        <div key={i} style={{ whiteSpace: 'nowrap', marginBottom: 2 }}>
+                          <span className={`status-dot ${ev.status === '出席' ? 'dot-success' : ev.status === '事前登録' ? 'dot-info' : 'dot-muted'}`} />
+                          {ev.eventName}
+                        </div>
+                      ))
+                    ) : (
+                      <span style={{ color: 'var(--color-text-muted)' }}>-</span>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

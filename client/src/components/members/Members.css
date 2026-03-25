@@ -55,6 +55,47 @@
 }
 .back-link:hover { color: var(--color-primary); }
 
+/* Status dots */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: var(--color-text-muted);
+}
+.dot-success { background: var(--color-success); }
+.dot-info { background: var(--color-primary); }
+.dot-muted { background: var(--color-text-muted); }
+.dot-danger { background: var(--color-danger); }
+
+/* Event history in member detail */
+.event-history-list { list-style: none; padding: 0; margin: 0; }
+.event-history-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: var(--font-size-sm);
+}
+.event-history-item:last-child { border-bottom: none; }
+.event-history-name {
+  flex: 1;
+  font-weight: 500;
+  cursor: pointer;
+}
+.event-history-name:hover { color: var(--color-primary); }
+.event-history-date {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  min-width: 100px;
+}
+.event-history-type {
+  font-size: var(--font-size-xs);
+}
+
 /* Hide on mobile */
 @media (max-width: 768px) {
   .hide-mobile { display: none; }

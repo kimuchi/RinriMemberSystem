@@ -109,6 +109,7 @@ function formatMember(m, customFields, extraFields) {
 
 /**
  * GET /api/members - 会員一覧
+ * 各会員の直近イベント参加情報を付与
  */
 router.get('/', async (req, res) => {
   try {
@@ -116,7 +117,40 @@ router.get('/', async (req, res) => {
     await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
     const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
-    const members = data.map(m => formatMember(m, customFields, extraFields));
+
+    // イベント参加情報を取得
+    const { data: events } = await sheets.getSheetData('イベント');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+
+    // イベントIDから情報を引けるようにする
+    const eventMap = {};
+    events.forEach(e => { eventMap[e['ID']] = e; });
+
+    // 会員ID → 参加イベント一覧（日付降順で最新3件）
+    const memberEvents = {};
+    attendance.forEach(a => {
+      const mid = a['会員ID'];
+      if (!mid) return;
+      if (!memberEvents[mid]) memberEvents[mid] = [];
+      const ev = eventMap[a['イベントID']];
+      memberEvents[mid].push({
+        eventId: a['イベントID'],
+        eventName: ev ? ev['イベント名'] : '',
+        eventDate: ev ? ev['日時'] : '',
+        status: a['出席状態'],
+      });
+    });
+    // 日付降順ソート、最新3件
+    for (const mid of Object.keys(memberEvents)) {
+      memberEvents[mid].sort((a, b) => (b.eventDate || '').localeCompare(a.eventDate || ''));
+      memberEvents[mid] = memberEvents[mid].slice(0, 3);
+    }
+
+    const members = data.map(m => {
+      const fm = formatMember(m, customFields, extraFields);
+      fm.recentEvents = memberEvents[m['ID']] || [];
+      return fm;
+    });
     res.json({ members, customFields, extraFields });
   } catch (err) {
     console.error('Get members error:', err);
@@ -126,6 +160,7 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/members/:id - 会員詳細
+ * イベント参加履歴を全件付与
  */
 router.get('/:id', async (req, res) => {
   try {
@@ -135,7 +170,35 @@ router.get('/:id', async (req, res) => {
     const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
     const member = data.find(m => m['ID'] === req.params.id);
     if (!member) return res.status(404).json({ error: '会員が見つかりません' });
-    res.json({ member: formatMember(member, customFields, extraFields), customFields, extraFields });
+
+    // イベント参加履歴
+    const { data: events } = await sheets.getSheetData('イベント');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const eventMap = {};
+    events.forEach(e => { eventMap[e['ID']] = e; });
+
+    const memberAttendance = attendance
+      .filter(a => a['会員ID'] === req.params.id)
+      .map(a => {
+        const ev = eventMap[a['イベントID']];
+        return {
+          attendanceId: a['ID'],
+          eventId: a['イベントID'],
+          eventName: ev ? ev['イベント名'] : '',
+          eventDate: ev ? ev['日時'] : '',
+          eventType: ev ? ev['種類'] : '',
+          status: a['出席状態'],
+          notes: a['備考'],
+        };
+      })
+      .sort((a, b) => (b.eventDate || '').localeCompare(a.eventDate || ''));
+
+    res.json({
+      member: formatMember(member, customFields, extraFields),
+      customFields,
+      extraFields,
+      eventHistory: memberAttendance,
+    });
   } catch (err) {
     console.error('Get member error:', err);
     res.status(500).json({ error: '会員情報の取得に失敗しました' });

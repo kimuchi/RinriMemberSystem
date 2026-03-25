@@ -316,7 +316,7 @@ router.post('/execute', async (req, res) => {
         'イベントID': eventId,
         '会員ID': entry.memberId,
         '氏名': entry.memberName,
-        '出席状態': '未定',
+        '出席状態': '事前登録',
         '備考': entry.participationType || '',
       });
       registeredCount++;

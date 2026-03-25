@@ -111,7 +111,7 @@ export default function EventDetail() {
     setBulkSubmitting(true);
     try {
       const members = unregistered.filter(m => bulkSelected.has(m.id));
-      await api.addAttendanceBulk(id, members, '未定');
+      await api.addAttendanceBulk(id, members, '事前登録');
       toast.success(`${members.length}名を登録しました`);
       setShowBulkModal(false);
       loadData();
@@ -124,7 +124,7 @@ export default function EventDetail() {
 
   // 当日出席チェック
   async function handleCheckToggle(att) {
-    const newStatus = att.status === '出席' ? '未定' : '出席';
+    const newStatus = att.status === '出席' ? '事前登録' : '出席';
     try {
       await api.updateAttendance(id, att.id, { status: newStatus });
       setAttendance(prev => prev.map(a => a.id === att.id ? { ...a, status: newStatus } : a));
@@ -158,6 +158,7 @@ export default function EventDetail() {
   if (!event) return <div className="empty-state"><p>イベントが見つかりません</p></div>;
 
   const attended = attendance.filter(a => a.status === '出席').length;
+  const preRegistered = attendance.filter(a => a.status === '事前登録').length;
   const filteredUnregistered = unregistered.filter(m =>
     !bulkSearch || m.name.includes(bulkSearch)
   );
@@ -238,7 +239,7 @@ export default function EventDetail() {
       <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
         <div className="card-header">
           <h2 style={{ fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
-            出席管理（{attended}/{attendance.length}名 出席）
+            出席管理（当日出席 {attended}名 / 事前登録 {preRegistered}名 / 全{attendance.length}名）
           </h2>
           <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
             {attendance.length > 0 && (
@@ -266,7 +267,7 @@ export default function EventDetail() {
             /* 当日出席チェックモード */
             <div className="check-mode">
               <p className="check-mode-hint">
-                <Icon name="info" size={16} /> 名前をタップすると出席/未定を切り替えます
+                <Icon name="info" size={16} /> 名前をタップすると当日出席/事前登録を切り替えます
               </p>
               <div className="check-grid">
                 {attendance.map(a => (
@@ -307,9 +308,11 @@ export default function EventDetail() {
                         onChange={e => handleAttendanceChange(a.id, e.target.value)}
                         style={a.status === '出席' ? { color: 'var(--color-success)', background: 'var(--color-success-bg)' }
                           : a.status === '欠席' ? { color: 'var(--color-danger)', background: 'var(--color-danger-bg)' }
+                          : a.status === '事前登録' ? { color: 'var(--color-primary)', background: 'var(--color-primary-bg, #eff6ff)' }
                           : {}}
                       >
-                        <option value="出席">出席</option>
+                        <option value="事前登録">事前登録</option>
+                        <option value="出席">出席（当日）</option>
                         <option value="欠席">欠席</option>
                         <option value="遅刻">遅刻</option>
                         <option value="未定">未定</option>

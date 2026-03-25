@@ -213,7 +213,7 @@ router.post('/:id/attendance/bulk', async (req, res) => {
         'イベントID': req.params.id,
         '会員ID': m.id,
         '氏名': m.name,
-        '出席状態': status || '未定',
+        '出席状態': status || '事前登録',
         '備考': '',
       });
     }

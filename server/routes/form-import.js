@@ -313,69 +313,83 @@ router.post('/execute', async (req, res) => {
       existingAttendance.filter(a => a['イベントID'] === eventId).map(a => a['会員ID'])
     );
 
-    // 既存会員の出席登録
+    // ---- 1) 出席行をまとめて収集 ----
+    const attendanceRows = [];
+
+    // 既存会員の出席登録（行データの収集のみ）
     for (const entry of (entries || [])) {
-      // 既に登録済みの会員はスキップ
       if (alreadyRegistered.has(entry.memberId)) {
         skippedCount++;
       } else {
-        const attId = sheets.generateId();
-        await sheets.appendRow('イベント出席', {
-          'ID': attId,
+        attendanceRows.push({
+          'ID': sheets.generateId(),
           'イベントID': eventId,
           '会員ID': entry.memberId,
           '氏名': entry.memberName,
           '出席状態': '事前登録',
           '備考': entry.participationType || '',
         });
-        alreadyRegistered.add(entry.memberId); // 同バッチ内の重複も防止
+        alreadyRegistered.add(entry.memberId);
         registeredCount++;
       }
+    }
 
-      // 会員情報の更新（既に出席登録済みでも情報は更新する）
-      if (entry.updates && Object.keys(entry.updates).length > 0) {
-        const { data: members } = await sheets.getSheetData('会員名簿');
+    // ---- 2) 会員情報の差分更新（バッチ化） ----
+    const entriesWithUpdates = (entries || []).filter(
+      e => e.updates && Object.keys(e.updates).length > 0
+    );
+    if (entriesWithUpdates.length > 0) {
+      const { data: members } = await sheets.getSheetData('会員名簿');
+      const now = new Date().toISOString();
+      for (const entry of entriesWithUpdates) {
         const member = members.find(m => m['ID'] === entry.memberId);
         if (member) {
+          const updatedData = { ...member, '更新日': now };
           for (const [field, value] of Object.entries(entry.updates)) {
-            const normalized = field === 'ふりがな' ? normalizeFurigana(value) : value;
-            await sheets.updateCell('会員名簿', member._rowIndex, field, normalized);
+            updatedData[field] = field === 'ふりがな' ? normalizeFurigana(value) : value;
           }
-          await sheets.updateCell('会員名簿', member._rowIndex, '更新日', new Date().toISOString());
+          await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
           updatedCount++;
         }
       }
     }
 
-    // 新規会員の名簿追加 + 出席登録
+    // ---- 3) 新規会員をまとめて名簿に追加 ----
+    const newMemberRows = [];
+    const newMemberAttendanceRows = [];
     for (const nm of (newMembers || [])) {
       const memberId = sheets.generateId();
       const now = new Date().toISOString();
-      // ふりがなを正規化（カタカナ→ひらがな、日本語名はスペース除去）
       const fields = { ...nm.fields };
       if (fields['ふりがな']) {
         fields['ふりがな'] = normalizeFurigana(fields['ふりがな']);
       }
-      const memberData = {
+      newMemberRows.push({
         'ID': memberId,
         '登録日': now,
         '更新日': now,
         '氏名': nm.name || '',
         ...fields,
-      };
-      await sheets.appendRow('会員名簿', memberData);
-      newMemberCount++;
-
-      const attId = sheets.generateId();
-      await sheets.appendRow('イベント出席', {
-        'ID': attId,
+      });
+      newMemberAttendanceRows.push({
+        'ID': sheets.generateId(),
         'イベントID': eventId,
         '会員ID': memberId,
         '氏名': nm.name || '',
         '出席状態': '事前登録',
         '備考': nm.participationType || '',
       });
+      newMemberCount++;
       registeredCount++;
+    }
+
+    // ---- 4) まとめて書き込み（API呼び出し最小化） ----
+    if (newMemberRows.length > 0) {
+      await sheets.appendRows('会員名簿', newMemberRows);
+    }
+    const allAttendanceRows = [...attendanceRows, ...newMemberAttendanceRows];
+    if (allAttendanceRows.length > 0) {
+      await sheets.appendRows('イベント出席', allAttendanceRows);
     }
 
     res.json({ success: true, registeredCount, updatedCount, newMemberCount, skippedCount });

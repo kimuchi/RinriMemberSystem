@@ -55,6 +55,7 @@ class SheetsService {
     await this.init();
     const { headers } = await this.getSheetData(sheetName);
     const row = headers.map(h => rowData[h] || '');
+    console.log(`appendRow(${sheetName}): headers=${headers.length}, row=${JSON.stringify(row)}`);
 
     await this.sheets.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
@@ -224,6 +225,10 @@ class SheetsService {
             requests: [{ addSheet: { properties: { title: config.name } } }],
           },
         });
+      }
+      // ヘッダーが存在しない場合は書き込む（シートが既存でも空の場合に対応）
+      const { headers: existingHeaders } = await this.getSheetData(config.name);
+      if (existingHeaders.length === 0) {
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
           range: `${config.name}!A1`,

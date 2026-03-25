@@ -34,6 +34,7 @@ function detectExtraFields(headers, customFieldNames) {
 /**
  * スプレッドシートで直接追加された行のID・登録日・更新日を自動補完
  * 空欄の場合のみ補完し、シートに書き戻す
+ * バッチ処理で1行ずつ順次更新（API rate limit対策）
  */
 async function autoFillMembers(data) {
   const now = new Date().toISOString();
@@ -54,19 +55,21 @@ async function autoFillMembers(data) {
       m['更新日'] = fills['更新日'];
     }
     if (Object.keys(fills).length > 0) {
-      updates.push({ rowIndex: m._rowIndex, fills });
+      updates.push({ rowIndex: m._rowIndex, member: m });
     }
   }
 
-  // バックグラウンドでシートに書き戻す（レスポンスをブロックしない）
+  // バックグラウンドで順次書き戻す（updateRowで1行まとめて更新、rate limit回避）
   if (updates.length > 0) {
-    Promise.all(
-      updates.flatMap(({ rowIndex, fills }) =>
-        Object.entries(fills).map(([col, val]) =>
-          sheets.updateCell('会員名簿', rowIndex, col, val)
-        )
-      )
-    ).catch(err => console.error('Auto-fill write-back error:', err));
+    (async () => {
+      try {
+        for (const { rowIndex, member } of updates) {
+          await sheets.updateRow('会員名簿', rowIndex, member);
+        }
+      } catch (err) {
+        console.error('Auto-fill write-back error:', err);
+      }
+    })();
   }
 
   return data;
@@ -246,8 +249,9 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ error: '無効なフィールドです' });
     }
 
-    await sheets.updateCell('会員名簿', member._rowIndex, field, value);
-    await sheets.updateCell('会員名簿', member._rowIndex, '更新日', new Date().toISOString());
+    // Update field and timestamp in one row update (saves API calls)
+    const updatedData = { ...member, [field]: value, '更新日': new Date().toISOString() };
+    await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
     res.json({ success: true });
   } catch (err) {
     console.error('Update status error:', err);

@@ -10,6 +10,9 @@ class SheetsService {
     this.sheets = null;
     this.drive = null;
     this.spreadsheetId = process.env.SPREADSHEET_ID;
+    // In-memory cache: { sheetName: { data, timestamp } }
+    this._cache = {};
+    this._cacheTTL = 30 * 1000; // 30 seconds
   }
 
   async init() {
@@ -27,14 +30,43 @@ class SheetsService {
 
   // ============ Core Sheet Operations ============
 
+  _getCached(sheetName) {
+    const entry = this._cache[sheetName];
+    if (entry && (Date.now() - entry.timestamp) < this._cacheTTL) {
+      return entry.data;
+    }
+    return null;
+  }
+
+  _setCache(sheetName, data) {
+    this._cache[sheetName] = { data, timestamp: Date.now() };
+  }
+
+  invalidateCache(sheetName) {
+    if (sheetName) {
+      delete this._cache[sheetName];
+    } else {
+      this._cache = {};
+    }
+  }
+
   async getSheetData(sheetName) {
     await this.init();
+
+    // Check cache first
+    const cached = this._getCached(sheetName);
+    if (cached) return cached;
+
     const res = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
       range: `${sheetName}!A:ZZ`,
     });
     const rows = res.data.values || [];
-    if (rows.length === 0) return { headers: [], data: [], headerMap: {} };
+    if (rows.length === 0) {
+      const result = { headers: [], data: [], headerMap: {} };
+      this._setCache(sheetName, result);
+      return result;
+    }
 
     const headers = rows[0];
     const headerMap = {};
@@ -48,7 +80,17 @@ class SheetsService {
       return obj;
     });
 
-    return { headers, data, headerMap };
+    const result = { headers, data, headerMap };
+    this._setCache(sheetName, result);
+    return result;
+  }
+
+  /**
+   * Get only headers (uses cache, avoids full data parse if only headers needed)
+   */
+  async getHeaders(sheetName) {
+    const { headers, headerMap } = await this.getSheetData(sheetName);
+    return { headers, headerMap };
   }
 
   async appendRow(sheetName, rowData) {
@@ -64,6 +106,7 @@ class SheetsService {
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
     });
+    this.invalidateCache(sheetName);
   }
 
   async updateRow(sheetName, rowNumber, rowData) {
@@ -79,6 +122,7 @@ class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     });
+    this.invalidateCache(sheetName);
   }
 
   async deleteRow(sheetName, rowNumber) {
@@ -106,6 +150,7 @@ class SheetsService {
         }],
       },
     });
+    this.invalidateCache(sheetName);
   }
 
   async updateCell(sheetName, rowNumber, columnName, value) {
@@ -121,6 +166,7 @@ class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[value]] },
     });
+    this.invalidateCache(sheetName);
   }
 
   // ============ Column Management ============
@@ -137,6 +183,7 @@ class SheetsService {
       valueInputOption: 'RAW',
       requestBody: { values: [[columnName]] },
     });
+    this.invalidateCache(sheetName);
   }
 
   // ============ Custom Fields ============

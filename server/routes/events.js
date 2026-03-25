@@ -213,17 +213,15 @@ router.post('/:id/attendance/bulk', async (req, res) => {
     if (!members || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ error: '会員が選択されていません' });
     }
-    for (const m of members) {
-      const id = sheets.generateId();
-      await sheets.appendRow('イベント出席', {
-        'ID': id,
-        'イベントID': req.params.id,
-        '会員ID': m.id,
-        '氏名': m.name,
-        '出席状態': status || '事前登録',
-        '備考': '',
-      });
-    }
+    const rows = members.map(m => ({
+      'ID': sheets.generateId(),
+      'イベントID': req.params.id,
+      '会員ID': m.id,
+      '氏名': m.name,
+      '出席状態': status || '事前登録',
+      '備考': '',
+    }));
+    await sheets.appendRows('イベント出席', rows);
     res.json({ success: true, count: members.length });
   } catch (err) {
     console.error('Bulk attendance error:', err);

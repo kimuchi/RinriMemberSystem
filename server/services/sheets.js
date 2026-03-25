@@ -109,6 +109,23 @@ class SheetsService {
     this.invalidateCache(sheetName);
   }
 
+  async appendRows(sheetName, rowDataArray) {
+    if (!rowDataArray || rowDataArray.length === 0) return;
+    await this.init();
+    const { headers } = await this.getSheetData(sheetName);
+    const rows = rowDataArray.map(rowData => headers.map(h => rowData[h] || ''));
+    console.log(`appendRows(${sheetName}): ${rows.length} rows`);
+
+    await this.sheets.spreadsheets.values.append({
+      spreadsheetId: this.spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: rows },
+    });
+    this.invalidateCache(sheetName);
+  }
+
   async updateRow(sheetName, rowNumber, rowData) {
     await this.init();
     const { headers } = await this.getSheetData(sheetName);

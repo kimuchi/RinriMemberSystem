@@ -10,6 +10,15 @@ const FORM_CONFIG_SHEET = 'フォーム連携設定';
 const FORM_CONFIG_HEADERS = ['イベントID', 'スプレッドシートID', 'シート名', 'マッピング'];
 
 /**
+ * カタカナをひらがなに変換
+ */
+function katakanaToHiragana(str) {
+  return str.replace(/[\u30A1-\u30F6]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) - 0x60)
+  );
+}
+
+/**
  * 日本語名のスペースを正規化
  * - 英語名（ASCII文字のみ）: スペース維持
  * - 日本語名: 全角・半角スペースを除去
@@ -19,6 +28,13 @@ function normalizeName(name) {
   name = name.trim();
   if (/^[a-zA-Z\s\-'.]+$/.test(name)) return name;
   return name.replace(/[\s\u3000]+/g, '');
+}
+
+/**
+ * ふりがなフィールド用の正規化（カタカナ→ひらがな変換 + スペース除去）
+ */
+function normalizeFurigana(name) {
+  return katakanaToHiragana(normalizeName(name));
 }
 
 /**
@@ -222,7 +238,9 @@ router.post('/preview', async (req, res) => {
         if (memberCol && row[formCol]) {
           let value = row[formCol];
           // 氏名・ふりがなフィールドの正規化
-          if (memberCol === '氏名' || memberCol === 'ふりがな') {
+          if (memberCol === '氏名') {
+            value = normalizeName(value);
+          } else if (memberCol === 'ふりがな') {
             value = normalizeName(value);
           }
           mappedFormData[memberCol] = value;
@@ -236,10 +254,13 @@ router.post('/preview', async (req, res) => {
           const memberValue = member[field] || '';
           let compareForm = formValue;
           let compareMember = memberValue;
-          // 氏名・ふりがなは正規化して比較
-          if (field === '氏名' || field === 'ふりがな') {
+          // 氏名・ふりがなは正規化して比較（ふりがなはカタカナ→ひらがな変換も適用）
+          if (field === '氏名') {
             compareForm = normalizeName(formValue);
             compareMember = normalizeName(memberValue);
+          } else if (field === 'ふりがな') {
+            compareForm = normalizeFurigana(formValue);
+            compareMember = normalizeFurigana(memberValue);
           }
           if (compareForm && compareForm !== compareMember) {
             diffs.push({ field, formValue, memberValue });

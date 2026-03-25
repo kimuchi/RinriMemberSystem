@@ -142,7 +142,7 @@ export default function FormImport({ eventId, onImported }) {
       const res = await api.previewFormImport(eventId);
       setPreview(res);
 
-      // デフォルトの差分解決: フォームの値を採用
+      // デフォルトの差分解決: 名簿の値を維持
       const defaults = {};
       for (const entry of res.entries) {
         if (entry.diffs.length > 0 && entry.matched) {

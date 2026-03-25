@@ -334,7 +334,7 @@ export default function EventDetail() {
       {/* 一括登録モーダル */}
       {showBulkModal && (
         <div className="modal-overlay" onClick={() => setShowBulkModal(false)}>
-          <div className="modal bulk-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-content bulk-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>出席者を一括登録</h2>
               <button className="btn-icon" onClick={() => setShowBulkModal(false)}>

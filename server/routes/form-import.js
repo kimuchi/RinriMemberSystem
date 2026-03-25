@@ -210,6 +210,8 @@ router.post('/preview', async (req, res) => {
 
     const entries = [];
     let skipCount = 0;
+    // 同一人物の重複検出用（正規化名 → 最初のformRow）
+    const seenNames = {};
 
     for (const row of formData) {
       const formName = row[nameField] || '';
@@ -268,6 +270,13 @@ router.post('/preview', async (req, res) => {
         }
       }
 
+      // 重複検出
+      const isDuplicate = normalizedFormName && seenNames[normalizedFormName] !== undefined;
+      const duplicateOf = isDuplicate ? seenNames[normalizedFormName] : null;
+      if (normalizedFormName && !isDuplicate) {
+        seenNames[normalizedFormName] = row._rowIndex;
+      }
+
       entries.push({
         formRow: row._rowIndex,
         formName,
@@ -277,6 +286,8 @@ router.post('/preview', async (req, res) => {
         memberName: member ? member['氏名'] : null,
         participationType,
         alreadyRegistered: member ? registeredMemberIds.has(member['ID']) : false,
+        isDuplicate,
+        duplicateOf,
         diffs,
         mappedFormData,
       });
@@ -295,21 +306,25 @@ router.post('/preview', async (req, res) => {
 
 /**
  * POST /form/execute - 取り込み実行
- * body: { entries: [{ memberId, memberName, participationType, updates: { field: value } }] }
+ * body: {
+ *   entries: [{ memberId, memberName, participationType, updates: { field: value } }],
+ *   newMembers: [{ name, participationType, fields: { memberCol: value } }]
+ * }
  */
 router.post('/execute', async (req, res) => {
   try {
-    const { entries } = req.body;
-    if (!entries || entries.length === 0) {
+    const { entries, newMembers } = req.body;
+    if ((!entries || entries.length === 0) && (!newMembers || newMembers.length === 0)) {
       return res.status(400).json({ error: '取り込む対象がありません' });
     }
 
     const eventId = req.params.id;
     let registeredCount = 0;
     let updatedCount = 0;
+    let newMemberCount = 0;
 
-    for (const entry of entries) {
-      // 出席登録
+    // 既存会員の出席登録
+    for (const entry of (entries || [])) {
       const attId = sheets.generateId();
       await sheets.appendRow('イベント出席', {
         'ID': attId,
@@ -333,7 +348,33 @@ router.post('/execute', async (req, res) => {
       }
     }
 
-    res.json({ success: true, registeredCount, updatedCount });
+    // 新規会員の名簿追加 + 出席登録
+    for (const nm of (newMembers || [])) {
+      const memberId = sheets.generateId();
+      const now = new Date().toISOString();
+      const memberData = {
+        'ID': memberId,
+        '登録日': now,
+        '更新日': now,
+        '氏名': nm.name || '',
+        ...nm.fields,
+      };
+      await sheets.appendRow('会員名簿', memberData);
+      newMemberCount++;
+
+      const attId = sheets.generateId();
+      await sheets.appendRow('イベント出席', {
+        'ID': attId,
+        'イベントID': eventId,
+        '会員ID': memberId,
+        '氏名': nm.name || '',
+        '出席状態': '事前登録',
+        '備考': nm.participationType || '',
+      });
+      registeredCount++;
+    }
+
+    res.json({ success: true, registeredCount, updatedCount, newMemberCount });
   } catch (err) {
     console.error('Form execute error:', err);
     res.status(500).json({ error: '取り込みに失敗しました' });

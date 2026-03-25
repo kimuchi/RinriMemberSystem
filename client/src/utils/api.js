@@ -59,8 +59,8 @@ export const api = {
     apiFetch(`/api/events/${eventId}/form`, { method: 'DELETE' }),
   previewFormImport: (eventId) =>
     apiFetch(`/api/events/${eventId}/form/preview`, { method: 'POST' }),
-  executeFormImport: (eventId, entries) =>
-    apiFetch(`/api/events/${eventId}/form/execute`, { method: 'POST', body: JSON.stringify({ entries }) }),
+  executeFormImport: (eventId, entries, newMembers) =>
+    apiFetch(`/api/events/${eventId}/form/execute`, { method: 'POST', body: JSON.stringify({ entries, newMembers }) }),
 
   // Settings
   getUsers: () => apiFetch('/api/settings/users'),

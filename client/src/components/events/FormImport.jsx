@@ -33,6 +33,12 @@ export default function FormImport({ eventId, onImported }) {
 
   // 差分解決
   const [diffResolutions, setDiffResolutions] = useState({});
+  // 既存会員の登録チェック（デフォルトON）
+  const [matchedChecked, setMatchedChecked] = useState(new Set());
+
+  // 新規会員登録（未照合）
+  const [newMemberChecked, setNewMemberChecked] = useState(new Set());
+  const [newMemberEdits, setNewMemberEdits] = useState({});
 
   // 実行
   const [executing, setExecuting] = useState(false);
@@ -138,6 +144,8 @@ export default function FormImport({ eventId, onImported }) {
     setPreviewing(true);
     setPreview(null);
     setDiffResolutions({});
+    setNewMemberChecked(new Set());
+    setNewMemberEdits({});
     try {
       const res = await api.previewFormImport(eventId);
       setPreview(res);
@@ -153,6 +161,14 @@ export default function FormImport({ eventId, onImported }) {
         }
       }
       setDiffResolutions(defaults);
+      // デフォルトで照合済み（未登録）を全員チェック
+      const checkedSet = new Set();
+      for (const entry of res.entries) {
+        if (entry.matched && !entry.alreadyRegistered) {
+          checkedSet.add(entry.formRow);
+        }
+      }
+      setMatchedChecked(checkedSet);
       setStep('preview');
     } catch (err) {
       toast.error(err.message);
@@ -185,8 +201,10 @@ export default function FormImport({ eventId, onImported }) {
   async function handleExecute() {
     if (!preview) return;
 
-    const toImport = preview.entries.filter(e => e.matched && !e.alreadyRegistered);
-    if (toImport.length === 0) {
+    const toImport = preview.entries.filter(e => e.matched && !e.alreadyRegistered && matchedChecked.has(e.formRow));
+    const toAddNew = preview.entries.filter(e => !e.matched && newMemberChecked.has(e.formRow));
+
+    if (toImport.length === 0 && toAddNew.length === 0) {
       toast.warning('取り込む対象がありません');
       return;
     }
@@ -211,8 +229,24 @@ export default function FormImport({ eventId, onImported }) {
         };
       });
 
-      const res = await api.executeFormImport(eventId, entries);
-      toast.success(`${res.registeredCount}名の出席を登録しました${res.updatedCount > 0 ? `（${res.updatedCount}名の情報を更新）` : ''}`);
+      // 新規会員
+      const newMembers = toAddNew.map(e => {
+        const edits = newMemberEdits[e.formRow] || {};
+        const fields = { ...e.mappedFormData, ...edits };
+        const name = edits['氏名'] || e.formName;
+        return {
+          name,
+          participationType: e.participationType,
+          fields,
+        };
+      });
+
+      const res = await api.executeFormImport(eventId, entries, newMembers);
+      const msgs = [];
+      if (res.registeredCount > 0) msgs.push(`${res.registeredCount}名の出席を登録`);
+      if (res.newMemberCount > 0) msgs.push(`${res.newMemberCount}名を名簿に追加`);
+      if (res.updatedCount > 0) msgs.push(`${res.updatedCount}名の情報を更新`);
+      toast.success(msgs.join('、') + 'しました');
       setStep('ready');
       setPreview(null);
       if (onImported) onImported();
@@ -423,18 +457,24 @@ export default function FormImport({ eventId, onImported }) {
   function renderPreview() {
     if (!preview) return null;
 
-    const matched = preview.entries.filter(e => e.matched && !e.alreadyRegistered);
+    const matched = preview.entries.filter(e => e.matched && !e.alreadyRegistered && !e.isDuplicate);
+    const duplicates = preview.entries.filter(e => e.isDuplicate);
     const alreadyReg = preview.entries.filter(e => e.alreadyRegistered);
-    const unmatched = preview.entries.filter(e => !e.matched);
+    const unmatched = preview.entries.filter(e => !e.matched && !e.isDuplicate);
     const withDiffs = matched.filter(e => e.diffs.length > 0);
+    const checkedMatched = matched.filter(e => matchedChecked.has(e.formRow));
 
     return (
       <div className="form-preview">
         {/* サマリー */}
         <div className="preview-summary">
           <div className="summary-item">
-            <span className="summary-count">{matched.length}</span>
+            <span className="summary-count">{checkedMatched.length}</span>
             <span>名登録対象</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-count">{newMemberChecked.size}</span>
+            <span>名新規追加</span>
           </div>
           <div className="summary-item">
             <span className="summary-count">{alreadyReg.length}</span>
@@ -444,14 +484,77 @@ export default function FormImport({ eventId, onImported }) {
             <span className="summary-count">{preview.skipCount}</span>
             <span>名不参加</span>
           </div>
-          <div className="summary-item">
-            <span className="summary-count">{unmatched.length}</span>
-            <span>名未照合</span>
-          </div>
+          {duplicates.length > 0 && (
+            <div className="summary-item">
+              <span className="summary-count">{duplicates.length}</span>
+              <span>件重複</span>
+            </div>
+          )}
         </div>
 
+        {/* 照合済み一覧（チェックで登録/除外） */}
+        {matched.length > 0 && (
+          <div style={{ marginBottom: 'var(--space-md)' }}>
+            <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>
+              <Icon name="people" size={16} /> 名簿と照合済み（{matched.length}名）
+            </h3>
+            <div className="bulk-list" style={{ maxHeight: 200 }}>
+              <label className="bulk-check-item" style={{ fontWeight: 600, borderBottom: '1px solid var(--color-border)' }}>
+                <input
+                  type="checkbox"
+                  checked={matched.length > 0 && matched.every(e => matchedChecked.has(e.formRow))}
+                  onChange={() => {
+                    const allChecked = matched.every(e => matchedChecked.has(e.formRow));
+                    setMatchedChecked(prev => {
+                      const next = new Set(prev);
+                      matched.forEach(e => allChecked ? next.delete(e.formRow) : next.add(e.formRow));
+                      return next;
+                    });
+                  }}
+                />
+                <span>全員選択</span>
+              </label>
+              {matched.map(e => (
+                <label key={e.formRow} className="bulk-check-item">
+                  <input
+                    type="checkbox"
+                    checked={matchedChecked.has(e.formRow)}
+                    onChange={() => {
+                      setMatchedChecked(prev => {
+                        const next = new Set(prev);
+                        if (next.has(e.formRow)) next.delete(e.formRow);
+                        else next.add(e.formRow);
+                        return next;
+                      });
+                    }}
+                  />
+                  <span>{e.memberName}</span>
+                  {e.participationType && <span className="badge badge-primary" style={{ fontSize: 'var(--font-size-xs)' }}>{e.participationType}</span>}
+                  {e.diffs.length > 0 && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning)' }}>差異あり</span>}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 重複回答 */}
+        {duplicates.length > 0 && (
+          <div style={{ marginBottom: 'var(--space-md)' }}>
+            <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-warning)' }}>
+              <Icon name="content_copy" size={16} /> 重複回答（{duplicates.length}件 - 後の回答をスキップ）
+            </h3>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+              {duplicates.map(e => (
+                <div key={e.formRow} style={{ padding: '4px 0' }}>
+                  {e.formName} {e.participationType && `(${e.participationType})`}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 差分解決 */}
-        {withDiffs.length > 0 && (
+        {withDiffs.length > 0 && withDiffs.some(e => matchedChecked.has(e.formRow)) && (
           <div className="diff-section">
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>
               <Icon name="compare_arrows" size={16} /> 情報に差異がある会員（{withDiffs.length}名）
@@ -459,7 +562,7 @@ export default function FormImport({ eventId, onImported }) {
             <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
               フォームの値と名簿の値が異なる項目です。どちらを採用するか選択してください。
             </p>
-            {withDiffs.map(entry => (
+            {withDiffs.filter(e => matchedChecked.has(e.formRow)).map(entry => (
               <div key={entry.formRow} className="diff-card">
                 <div className="diff-card-header">{entry.memberName}</div>
                 {entry.diffs.map(diff => {
@@ -517,19 +620,58 @@ export default function FormImport({ eventId, onImported }) {
           </div>
         )}
 
-        {/* 未照合一覧 */}
+        {/* 未照合一覧 → 名簿に新規追加 */}
         {unmatched.length > 0 && (
           <div style={{ marginTop: 'var(--space-md)' }}>
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-warning)' }}>
-              <Icon name="help" size={16} /> 名簿に見つからなかった回答（{unmatched.length}件）
+              <Icon name="person_add" size={16} /> 名簿に見つからなかった回答（{unmatched.length}件）
             </h3>
-            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-              {unmatched.map(e => (
-                <div key={e.formRow} style={{ padding: '4px 0' }}>
-                  {e.formName || '(名前なし)'}
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
+              チェックを入れると会員名簿に新規追加し、出席登録します。
+            </p>
+            {unmatched.map(e => {
+              const checked = newMemberChecked.has(e.formRow);
+              const edits = newMemberEdits[e.formRow] || {};
+              return (
+                <div key={e.formRow} className="diff-card" style={{ opacity: checked ? 1 : 0.6 }}>
+                  <label className="diff-card-header" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setNewMemberChecked(prev => {
+                          const next = new Set(prev);
+                          if (next.has(e.formRow)) next.delete(e.formRow);
+                          else next.add(e.formRow);
+                          return next;
+                        });
+                      }}
+                      style={{ width: 18, height: 18, accentColor: 'var(--color-primary)' }}
+                    />
+                    <span>{e.formName || '(名前なし)'}</span>
+                    {e.participationType && <span className="badge badge-primary" style={{ fontSize: 'var(--font-size-xs)' }}>{e.participationType}</span>}
+                  </label>
+                  {checked && Object.keys(e.mappedFormData).length > 0 && (
+                    <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+                      {Object.entries(e.mappedFormData).map(([field, value]) => (
+                        <div key={field} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 4, fontSize: 'var(--font-size-sm)' }}>
+                          <span style={{ minWidth: 100, color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-xs)' }}>{field}</span>
+                          <input
+                            className="form-input"
+                            style={{ padding: '2px 6px', fontSize: 'var(--font-size-sm)' }}
+                            value={edits[field] !== undefined ? edits[field] : value}
+                            onChange={ev => setNewMemberEdits(prev => ({
+                              ...prev,
+                              [e.formRow]: { ...(prev[e.formRow] || {}), [field]: ev.target.value },
+                            }))}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
 
@@ -550,10 +692,10 @@ export default function FormImport({ eventId, onImported }) {
           <button
             className="btn btn-primary"
             onClick={handleExecute}
-            disabled={executing || matched.length === 0}
+            disabled={executing || (matched.length === 0 && newMemberChecked.size === 0)}
           >
             <Icon name="check_circle" size={16} />
-            {executing ? '登録中...' : `${matched.length}名を登録する`}
+            {executing ? '登録中...' : `${matched.length + newMemberChecked.size}名を登録する${newMemberChecked.size > 0 ? `（新規${newMemberChecked.size}名含む）` : ''}`}
           </button>
           <button className="btn btn-secondary" onClick={() => setStep('ready')}>
             キャンセル

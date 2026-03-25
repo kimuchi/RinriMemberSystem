@@ -170,16 +170,25 @@ async function main() {
   }
   console.log("");
   console.log("   シークレットへのアクセス権限を付与:");
+  console.log("");
+  const secrets = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SPREADSHEET_ID", "JWT_SECRET", "REDIRECT_URI"];
   if (isWindows) {
+    console.log("   【PowerShell の場合】");
     console.log(`   $PROJECT_NUMBER = (gcloud projects describe ${projectId} --format="value(projectNumber)")`);
-    console.log('   foreach ($SECRET in @("GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET","SPREADSHEET_ID","JWT_SECRET","REDIRECT_URI")) {');
+    console.log('   foreach ($SECRET in @("' + secrets.join('","') + '")) {');
     console.log("     gcloud secrets add-iam-policy-binding $SECRET ``");
     console.log('       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" ``');
     console.log('       --role="roles/secretmanager.secretAccessor"');
     console.log("   }");
+    console.log("");
+    console.log("   【コマンドプロンプト(cmd.exe)の場合】");
+    console.log(`   for /F "tokens=*" %N in ('gcloud projects describe ${projectId} --format="value(projectNumber)"') do set PROJECT_NUMBER=%N`);
+    console.log("   for %S in (" + secrets.join(" ") + ") do gcloud secrets add-iam-policy-binding %S --member=\"serviceAccount:%PROJECT_NUMBER%-compute@developer.gserviceaccount.com\" --role=\"roles/secretmanager.secretAccessor\"");
+    console.log("");
+    console.log("   ※ バッチファイル(.bat)内では %N → %%N, %S → %%S に変更してください");
   } else {
     console.log(`   PROJECT_NUMBER=$(gcloud projects describe ${projectId} --format='value(projectNumber)')`);
-    console.log("   for SECRET in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SPREADSHEET_ID JWT_SECRET REDIRECT_URI; do");
+    console.log("   for SECRET in " + secrets.join(" ") + "; do");
     console.log("     gcloud secrets add-iam-policy-binding $SECRET \\");
     console.log('       --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \\');
     console.log('       --role="roles/secretmanager.secretAccessor"');

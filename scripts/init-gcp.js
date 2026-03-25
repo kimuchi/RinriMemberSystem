@@ -186,28 +186,14 @@ async function main() {
       }
     }
 
-    // IAM権限付与
+    // IAM権限付与（サービスアカウントにSecret Managerアクセス権を付与）
     console.log("");
     console.log(">>> シークレットへのアクセス権限を付与中...");
-    let projectNumber;
-    try {
-      projectNumber = getOutput(
-        `gcloud projects describe ${projectId} --format="value(projectNumber)"`
-      );
-    } catch {
-      console.error("  警告: プロジェクト番号の取得に失敗しました。");
-    }
-
-    if (projectNumber) {
-      const computeSa = `${projectNumber}-compute@developer.gserviceaccount.com`;
-      for (const { name } of secretEntries) {
-        run(
-          `gcloud secrets add-iam-policy-binding ${name} --member="serviceAccount:${computeSa}" --role="roles/secretmanager.secretAccessor" --project=${projectId}`,
-          { ignoreError: true }
-        );
-      }
-      console.log("  シークレットの権限付与が完了しました。");
-    }
+    run(
+      `gcloud projects add-iam-policy-binding ${projectId} --member="serviceAccount:${saEmail}" --role="roles/secretmanager.secretAccessor"`,
+      { ignoreError: true }
+    );
+    console.log("  サービスアカウントへのシークレット権限付与が完了しました。");
   } else {
     console.log("");
     console.log("後でシークレットを設定する場合は、このスクリプトを再度実行してください。");

@@ -39,7 +39,7 @@ const region = process.env.GCP_REGION || "asia-northeast1";
 const serviceName = process.env.CLOUD_RUN_SERVICE || "rinri-member-system";
 const repoName = process.env.ARTIFACT_REPO || "docker-repo";
 const imageName = `${region}-docker.pkg.dev/${projectId}/${repoName}/${serviceName}`;
-const saName = process.env.SERVICE_ACCOUNT || "";
+const saName = process.env.SERVICE_ACCOUNT || `rinri-system-sa@${projectId}.iam.gserviceaccount.com`;
 
 if (!projectId) {
   console.error("エラー: GCPプロジェクトIDが設定されていません");
@@ -54,6 +54,7 @@ console.log(`  プロジェクト: ${projectId}`);
 console.log(`  リージョン:   ${region}`);
 console.log(`  サービス名:   ${serviceName}`);
 console.log(`  イメージ:     ${imageName}`);
+console.log(`  サービスAC:   ${saName}`);
 console.log("");
 
 // === Cloud Build でビルド ===
@@ -79,9 +80,7 @@ const deployArgs = [
   "--set-secrets=GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,SPREADSHEET_ID=SPREADSHEET_ID:latest,JWT_SECRET=JWT_SECRET:latest,REDIRECT_URI=REDIRECT_URI:latest",
 ];
 
-if (saName) {
-  deployArgs.push(`--service-account=${saName}`);
-}
+deployArgs.push(`--service-account=${saName}`);
 
 run(deployArgs.join(" "));
 

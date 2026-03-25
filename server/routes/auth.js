@@ -108,7 +108,7 @@ router.get('/callback', async (req, res) => {
   } catch (err) {
     console.error('Auth callback error:', err.message);
     console.error('Auth callback stack:', err.stack);
-    res.redirect(`/?error=auth_failed&detail=${encodeURIComponent(err.message)}`);
+    res.redirect('/?error=auth_failed');
   }
 });
 

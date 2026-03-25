@@ -40,6 +40,8 @@ export const api = {
   deleteEvent: (id) => apiFetch(`/api/events/${id}`, { method: 'DELETE' }),
   addAttendance: (eventId, data) =>
     apiFetch(`/api/events/${eventId}/attendance`, { method: 'POST', body: JSON.stringify(data) }),
+  addAttendanceBulk: (eventId, members, status) =>
+    apiFetch(`/api/events/${eventId}/attendance/bulk`, { method: 'POST', body: JSON.stringify({ members, status }) }),
   updateAttendance: (eventId, attId, data) =>
     apiFetch(`/api/events/${eventId}/attendance/${attId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAttendance: (eventId, attId) =>

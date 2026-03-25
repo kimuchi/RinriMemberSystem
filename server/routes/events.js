@@ -193,6 +193,34 @@ router.post('/:id/attendance', async (req, res) => {
 });
 
 /**
+ * POST /api/events/:id/attendance/bulk - 一括出席登録
+ * body: { members: [{ id, name }], status: '未定' }
+ */
+router.post('/:id/attendance/bulk', async (req, res) => {
+  try {
+    const { members, status } = req.body;
+    if (!members || !Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ error: '会員が選択されていません' });
+    }
+    for (const m of members) {
+      const id = sheets.generateId();
+      await sheets.appendRow('イベント出席', {
+        'ID': id,
+        'イベントID': req.params.id,
+        '会員ID': m.id,
+        '氏名': m.name,
+        '出席状態': status || '未定',
+        '備考': '',
+      });
+    }
+    res.json({ success: true, count: members.length });
+  } catch (err) {
+    console.error('Bulk attendance error:', err);
+    res.status(500).json({ error: '一括登録に失敗しました' });
+  }
+});
+
+/**
  * PATCH /api/events/:eventId/attendance/:attId - 出席状態更新
  */
 router.patch('/:eventId/attendance/:attId', async (req, res) => {

@@ -17,7 +17,15 @@ export default function EventDetail() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [eventTypes, setEventTypes] = useState([]);
-  const [addMemberId, setAddMemberId] = useState('');
+
+  // 一括登録モーダル
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState(new Set());
+  const [bulkSearch, setBulkSearch] = useState('');
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+
+  // 当日出席チェックモード
+  const [checkMode, setCheckMode] = useState(false);
 
   useEffect(() => { loadData(); }, [id]);
 
@@ -64,21 +72,63 @@ export default function EventDetail() {
     }
   }
 
-  async function handleAddAttendee() {
-    if (!addMemberId) return;
-    const member = unregistered.find(m => m.id === addMemberId);
-    if (!member) return;
-    try {
-      await api.addAttendance(id, {
-        memberId: member.id,
-        memberName: member.name,
-        status: '出席',
+  // 一括登録
+  function openBulkModal() {
+    setBulkSelected(new Set());
+    setBulkSearch('');
+    setShowBulkModal(true);
+  }
+
+  function toggleBulkMember(memberId) {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  }
+
+  function toggleBulkAll(filtered) {
+    const allSelected = filtered.every(m => bulkSelected.has(m.id));
+    if (allSelected) {
+      setBulkSelected(prev => {
+        const next = new Set(prev);
+        filtered.forEach(m => next.delete(m.id));
+        return next;
       });
-      toast.success(`${member.name}さんを追加しました`);
-      setAddMemberId('');
+    } else {
+      setBulkSelected(prev => {
+        const next = new Set(prev);
+        filtered.forEach(m => next.add(m.id));
+        return next;
+      });
+    }
+  }
+
+  async function handleBulkSubmit() {
+    if (bulkSelected.size === 0) return;
+    setBulkSubmitting(true);
+    try {
+      const members = unregistered.filter(m => bulkSelected.has(m.id));
+      await api.addAttendanceBulk(id, members, '未定');
+      toast.success(`${members.length}名を登録しました`);
+      setShowBulkModal(false);
       loadData();
     } catch (err) {
       toast.error(err.message);
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
+
+  // 当日出席チェック
+  async function handleCheckToggle(att) {
+    const newStatus = att.status === '出席' ? '未定' : '出席';
+    try {
+      await api.updateAttendance(id, att.id, { status: newStatus });
+      setAttendance(prev => prev.map(a => a.id === att.id ? { ...a, status: newStatus } : a));
+    } catch (err) {
+      toast.error('更新に失敗しました');
     }
   }
 
@@ -107,6 +157,9 @@ export default function EventDetail() {
   if (!event) return <div className="empty-state"><p>イベントが見つかりません</p></div>;
 
   const attended = attendance.filter(a => a.status === '出席').length;
+  const filteredUnregistered = unregistered.filter(m =>
+    !bulkSearch || m.name.includes(bulkSearch)
+  );
 
   return (
     <div className="event-detail">
@@ -183,22 +236,54 @@ export default function EventDetail() {
           <h2 style={{ fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
             出席管理（{attended}/{attendance.length}名 出席）
           </h2>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            {attendance.length > 0 && (
+              <button
+                className={`btn btn-sm ${checkMode ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setCheckMode(!checkMode)}
+              >
+                <Icon name="fact_check" size={16} />
+                {checkMode ? '通常モードに戻す' : '当日出席チェック'}
+              </button>
+            )}
+            {unregistered.length > 0 && (
+              <button className="btn btn-primary btn-sm" onClick={openBulkModal}>
+                <Icon name="group_add" size={16} /> 一括登録
+              </button>
+            )}
+          </div>
         </div>
         <div className="card-body">
-          {/* Add member */}
-          <div className="attendance-controls">
-            <select className="form-select" style={{ maxWidth: 300 }} value={addMemberId} onChange={e => setAddMemberId(e.target.value)}>
-              <option value="">会員を追加...</option>
-              {unregistered.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-            <button className="btn btn-primary btn-sm" onClick={handleAddAttendee} disabled={!addMemberId}>
-              <Icon name="person_add" size={16} /> 追加
-            </button>
-          </div>
-
           {attendance.length === 0 ? (
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>出席者がまだ登録されていません</p>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
+              出席者がまだ登録されていません。「一括登録」から会員を追加してください。
+            </p>
+          ) : checkMode ? (
+            /* 当日出席チェックモード */
+            <div className="check-mode">
+              <p className="check-mode-hint">
+                <Icon name="info" size={16} /> 名前をタップすると出席/未定を切り替えます
+              </p>
+              <div className="check-grid">
+                {attendance.map(a => (
+                  <button
+                    key={a.id}
+                    className={`check-card ${a.status === '出席' ? 'checked' : ''}`}
+                    onClick={() => handleCheckToggle(a)}
+                  >
+                    <span className="check-icon">
+                      {a.status === '出席'
+                        ? <Icon name="check_circle" size={28} />
+                        : <Icon name="radio_button_unchecked" size={28} />}
+                    </span>
+                    <span className="check-name">{a.memberName}</span>
+                    <span className="check-status">{a.status}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : (
+            /* 通常モード */
             <table className="data-table">
               <thead>
                 <tr>
@@ -238,6 +323,72 @@ export default function EventDetail() {
           )}
         </div>
       </div>
+
+      {/* 一括登録モーダル */}
+      {showBulkModal && (
+        <div className="modal-overlay" onClick={() => setShowBulkModal(false)}>
+          <div className="modal bulk-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>出席者を一括登録</h2>
+              <button className="btn-icon" onClick={() => setShowBulkModal(false)}>
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <input
+                className="form-input"
+                placeholder="名前で検索..."
+                value={bulkSearch}
+                onChange={e => setBulkSearch(e.target.value)}
+                style={{ marginBottom: 'var(--space-sm)' }}
+              />
+              <div className="bulk-select-header">
+                <label className="bulk-check-item" style={{ fontWeight: 600, borderBottom: '1px solid var(--color-border)' }}>
+                  <input
+                    type="checkbox"
+                    checked={filteredUnregistered.length > 0 && filteredUnregistered.every(m => bulkSelected.has(m.id))}
+                    onChange={() => toggleBulkAll(filteredUnregistered)}
+                  />
+                  <span>全員選択（{filteredUnregistered.length}名）</span>
+                </label>
+              </div>
+              <div className="bulk-list">
+                {filteredUnregistered.length === 0 ? (
+                  <p style={{ padding: 'var(--space-md)', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                    {unregistered.length === 0 ? '全会員が登録済みです' : '該当する会員がいません'}
+                  </p>
+                ) : (
+                  filteredUnregistered.map(m => (
+                    <label key={m.id} className="bulk-check-item">
+                      <input
+                        type="checkbox"
+                        checked={bulkSelected.has(m.id)}
+                        onChange={() => toggleBulkMember(m.id)}
+                      />
+                      <span>{m.name}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                {bulkSelected.size}名 選択中
+              </span>
+              <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                <button className="btn btn-secondary" onClick={() => setShowBulkModal(false)}>キャンセル</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleBulkSubmit}
+                  disabled={bulkSelected.size === 0 || bulkSubmitting}
+                >
+                  {bulkSubmitting ? '登録中...' : `${bulkSelected.size}名を登録`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

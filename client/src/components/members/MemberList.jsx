@@ -18,6 +18,7 @@ export default function MemberList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cfFilters, setCfFilters] = useState({});
+  const [efFilters, setEfFilters] = useState({});
   const [sortKey, setSortKey] = useState('furigana');
   const [sortDir, setSortDir] = useState('asc');
 
@@ -92,16 +93,43 @@ export default function MemberList() {
     });
   }, [eventList, showEventHistory, eventPeriodMonths]);
 
+  // 追加列のユニーク値を計算（フィルター用ドロップダウン）
+  const extraFieldOptions = useMemo(() => {
+    const map = {};
+    extraFields.forEach(col => {
+      const vals = new Set();
+      members.forEach(m => {
+        const v = (m.extraFields || {})[col];
+        if (v) vals.add(v);
+      });
+      map[col] = [...vals].sort((a, b) => a.localeCompare(b, 'ja'));
+    });
+    return map;
+  }, [members, extraFields]);
+
+  // ソート値を取得するヘルパー
+  function getSortValue(m, key) {
+    if (key.startsWith('cf:')) return (m.customFields || {})[key.slice(3)] || '';
+    if (key.startsWith('ef:')) return (m.extraFields || {})[key.slice(3)] || '';
+    return m[key] || '';
+  }
+
   const filtered = useMemo(() => {
     let result = [...members];
     if (search) {
       const s = search.toLowerCase();
-      result = result.filter(m =>
-        (m.name || '').toLowerCase().includes(s) ||
-        (m.furigana || '').toLowerCase().includes(s) ||
-        (m.company || '').toLowerCase().includes(s) ||
-        (m.email || '').toLowerCase().includes(s)
-      );
+      result = result.filter(m => {
+        if ((m.name || '').toLowerCase().includes(s)) return true;
+        if ((m.furigana || '').toLowerCase().includes(s)) return true;
+        if ((m.company || '').toLowerCase().includes(s)) return true;
+        if ((m.email || '').toLowerCase().includes(s)) return true;
+        // 追加列も検索対象
+        const ef = m.extraFields || {};
+        for (const col of extraFields) {
+          if ((ef[col] || '').toLowerCase().includes(s)) return true;
+        }
+        return false;
+      });
     }
     if (statusFilter) {
       result = result.filter(m => m.memberStatus === statusFilter);
@@ -110,6 +138,12 @@ export default function MemberList() {
     for (const [cfId, val] of Object.entries(cfFilters)) {
       if (val) {
         result = result.filter(m => m.customFields[cfId] === val);
+      }
+    }
+    // 追加列の絞り込み
+    for (const [col, val] of Object.entries(efFilters)) {
+      if (val) {
+        result = result.filter(m => (m.extraFields || {})[col] === val);
       }
     }
     // イベント参加で絞り込み
@@ -123,8 +157,8 @@ export default function MemberList() {
       });
     }
     result.sort((a, b) => {
-      let va = a[sortKey] || '';
-      let vb = b[sortKey] || '';
+      let va = getSortValue(a, sortKey);
+      let vb = getSortValue(b, sortKey);
       if (typeof va === 'string') va = va.toLowerCase();
       if (typeof vb === 'string') vb = vb.toLowerCase();
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
@@ -132,7 +166,7 @@ export default function MemberList() {
       return 0;
     });
     return result;
-  }, [members, search, statusFilter, cfFilters, sortKey, sortDir, showEventHistory, eventStatusFilter, periodEvents]);
+  }, [members, search, statusFilter, cfFilters, efFilters, sortKey, sortDir, showEventHistory, eventStatusFilter, periodEvents, extraFields]);
 
   // 会員ごとの期間内参加回数を計算
   function getAttendanceCount(member) {
@@ -205,6 +239,22 @@ export default function MemberList() {
             {(cfOptionsMap[cf.id] || []).map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         ))}
+        {extraFields.map(col => {
+          const opts = extraFieldOptions[col] || [];
+          if (opts.length === 0 || opts.length > 50) return null;
+          return (
+            <select
+              key={col}
+              className="form-select"
+              style={{ maxWidth: 200 }}
+              value={efFilters[col] || ''}
+              onChange={e => setEfFilters(prev => ({ ...prev, [col]: e.target.value }))}
+            >
+              <option value="">すべての{col}</option>
+              {opts.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          );
+        })}
       </div>
 
       {/* イベント参加履歴の表示設定 */}
@@ -256,10 +306,14 @@ export default function MemberList() {
                 入会ステータス <SortIcon col="memberStatus" />
               </th>
               {customFields.map(cf => (
-                <th key={cf.id} className="hide-mobile th-wrap">{cf.name}</th>
+                <th key={cf.id} className="hide-mobile th-wrap" onClick={() => handleSort(`cf:${cf.id}`)} style={{ cursor: 'pointer' }}>
+                  {cf.name} <SortIcon col={`cf:${cf.id}`} />
+                </th>
               ))}
               {extraFields.map(col => (
-                <th key={col} className="hide-mobile th-wrap">{col}</th>
+                <th key={col} className="hide-mobile th-wrap" onClick={() => handleSort(`ef:${col}`)} style={{ cursor: 'pointer' }}>
+                  {col} <SortIcon col={`ef:${col}`} />
+                </th>
               ))}
               <th className="hide-mobile th-wrap">直近イベント</th>
               {showEventHistory && (
@@ -278,7 +332,7 @@ export default function MemberList() {
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={totalCols} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
-                  {search || statusFilter || Object.values(cfFilters).some(v => v) ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
+                  {search || statusFilter || Object.values(cfFilters).some(v => v) || Object.values(efFilters).some(v => v) ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
                 </td>
               </tr>
             ) : (

@@ -148,7 +148,7 @@ export default function FormImport({ eventId, onImported }) {
         if (entry.diffs.length > 0 && entry.matched) {
           defaults[entry.formRow] = {};
           for (const diff of entry.diffs) {
-            defaults[entry.formRow][diff.field] = { value: diff.formValue, source: 'form' };
+            defaults[entry.formRow][diff.field] = { value: diff.memberValue, source: 'member' };
           }
         }
       }

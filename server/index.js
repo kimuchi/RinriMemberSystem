@@ -20,6 +20,10 @@ const { authMiddleware } = require('./middleware/auth');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Cloud Run のロードバランサー経由のリクエストを信頼
+// （secure Cookie の設定に必要）
+app.set('trust proxy', true);
+
 // Middleware
 app.use(compression());
 app.use(helmet({

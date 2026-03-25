@@ -148,14 +148,18 @@ router.get('/me', async (req, res) => {
   }
 
   try {
+    console.log('/auth/me: token valid, email =', decoded.email);
     const { data } = await sheets.getSheetData('ユーザー');
+    console.log('/auth/me: ユーザーsheet rows =', data.length, ', emails =', data.map(u => u['メールアドレス']));
     const user = data.find(u => u['メールアドレス'] === decoded.email);
     if (!user) {
+      console.log('/auth/me: user not found in sheet for email =', decoded.email);
       return res.json({ user: null });
     }
 
     // 単会名を取得
     const unitName = await sheets.getSetting('単会名');
+    console.log('/auth/me: success, user =', decoded.email, ', unitName =', unitName);
 
     res.json({
       user: {

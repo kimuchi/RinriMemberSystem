@@ -187,7 +187,7 @@ router.post('/:id/attendance', async (req, res) => {
       'イベントID': req.params.id,
       '会員ID': memberId,
       '氏名': memberName,
-      '出席状態': status || '出席',
+      '出席状態': status || '事前登録',
       '備考': req.body.notes || '',
     });
     res.json({ success: true, id });

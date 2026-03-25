@@ -1,5 +1,6 @@
 const express = require('express');
 const sheets = require('../services/sheets');
+const { normalizeFurigana } = require('../utils/normalize');
 const router = express.Router();
 
 // 基本フィールドの定義（APIキー → シート列名）
@@ -228,7 +229,10 @@ router.post('/', async (req, res) => {
 
     // 基本フィールド
     Object.entries(BASE_FIELDS).forEach(([apiKey, sheetCol]) => {
-      rowData[sheetCol] = req.body[apiKey] || '';
+      let val = req.body[apiKey] || '';
+      // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
+      if (apiKey === 'furigana') val = normalizeFurigana(val);
+      rowData[sheetCol] = val;
     });
 
     // カスタムフィールド（ドロップダウン）
@@ -271,7 +275,10 @@ router.put('/:id', async (req, res) => {
     // 基本フィールド
     Object.entries(BASE_FIELDS).forEach(([apiKey, sheetCol]) => {
       if (req.body[apiKey] !== undefined) {
-        updatedData[sheetCol] = req.body[apiKey];
+        let val = req.body[apiKey];
+        // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
+        if (apiKey === 'furigana') val = normalizeFurigana(val);
+        updatedData[sheetCol] = val;
       }
     });
 

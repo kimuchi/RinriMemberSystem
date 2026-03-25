@@ -4,38 +4,11 @@
  */
 const express = require('express');
 const sheets = require('../services/sheets');
+const { normalizeName, normalizeFurigana } = require('../utils/normalize');
 const router = express.Router({ mergeParams: true });
 
 const FORM_CONFIG_SHEET = 'フォーム連携設定';
 const FORM_CONFIG_HEADERS = ['イベントID', 'スプレッドシートID', 'シート名', 'マッピング'];
-
-/**
- * カタカナをひらがなに変換
- */
-function katakanaToHiragana(str) {
-  return str.replace(/[\u30A1-\u30F6]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) - 0x60)
-  );
-}
-
-/**
- * 日本語名のスペースを正規化
- * - 英語名（ASCII文字のみ）: スペース維持
- * - 日本語名: 全角・半角スペースを除去
- */
-function normalizeName(name) {
-  if (!name) return '';
-  name = name.trim();
-  if (/^[a-zA-Z\s\-'.]+$/.test(name)) return name;
-  return name.replace(/[\s\u3000]+/g, '');
-}
-
-/**
- * ふりがなフィールド用の正規化（カタカナ→ひらがな変換 + スペース除去）
- */
-function normalizeFurigana(name) {
-  return katakanaToHiragana(normalizeName(name));
-}
 
 /**
  * スプレッドシートURLまたはIDからスプレッドシートIDを抽出
@@ -352,7 +325,8 @@ router.post('/execute', async (req, res) => {
         const member = members.find(m => m['ID'] === entry.memberId);
         if (member) {
           for (const [field, value] of Object.entries(entry.updates)) {
-            await sheets.updateCell('会員名簿', member._rowIndex, field, value);
+            const normalized = field === 'ふりがな' ? normalizeFurigana(value) : value;
+            await sheets.updateCell('会員名簿', member._rowIndex, field, normalized);
           }
           await sheets.updateCell('会員名簿', member._rowIndex, '更新日', new Date().toISOString());
           updatedCount++;
@@ -364,12 +338,17 @@ router.post('/execute', async (req, res) => {
     for (const nm of (newMembers || [])) {
       const memberId = sheets.generateId();
       const now = new Date().toISOString();
+      // ふりがなを正規化（カタカナ→ひらがな、日本語名はスペース除去）
+      const fields = { ...nm.fields };
+      if (fields['ふりがな']) {
+        fields['ふりがな'] = normalizeFurigana(fields['ふりがな']);
+      }
       const memberData = {
         'ID': memberId,
         '登録日': now,
         '更新日': now,
         '氏名': nm.name || '',
-        ...nm.fields,
+        ...fields,
       };
       await sheets.appendRow('会員名簿', memberData);
       newMemberCount++;

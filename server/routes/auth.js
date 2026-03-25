@@ -48,8 +48,15 @@ router.get('/callback', async (req, res) => {
     const name = userInfo.name || email;
     const picture = userInfo.picture || '';
 
-    // ユーザーシートを確認
-    const { data: users } = await sheets.getSheetData('ユーザー');
+    // ユーザーシートを確認（シートが存在しない場合は初回セットアップへ）
+    let users = [];
+    try {
+      const result = await sheets.getSheetData('ユーザー');
+      users = result.data;
+    } catch (sheetErr) {
+      // シートが存在しない場合は空配列のまま（初回セットアップへ進む）
+      console.log('ユーザーシート未作成、初回セットアップを実行します');
+    }
 
     let user = users.find(u => u['メールアドレス'] === email);
 

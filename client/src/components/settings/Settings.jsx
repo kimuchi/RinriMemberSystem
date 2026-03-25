@@ -311,6 +311,8 @@ function CustomFieldSettings() {
   const [newFieldName, setNewFieldName] = useState('');
   const [expandedField, setExpandedField] = useState(null);
   const [newOptionName, setNewOptionName] = useState('');
+  const [editingNameId, setEditingNameId] = useState(null);
+  const [editingNameValue, setEditingNameValue] = useState('');
 
   useEffect(() => { load(); }, []);
 
@@ -375,6 +377,29 @@ function CustomFieldSettings() {
     }
   }
 
+  function startEditName(f) {
+    setEditingNameId(f.id);
+    setEditingNameValue(f.name);
+  }
+
+  async function handleSaveName(fieldId) {
+    const trimmed = editingNameValue.trim();
+    if (!trimmed) return;
+    const original = fields.find(f => f.id === fieldId);
+    if (original && original.name === trimmed) {
+      setEditingNameId(null);
+      return;
+    }
+    try {
+      await api.updateCustomField(fieldId, { name: trimmed });
+      toast.success('フィールド名を変更しました');
+      setEditingNameId(null);
+      load();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}><div className="spinner" /></div>;
 
   return (
@@ -398,7 +423,25 @@ function CustomFieldSettings() {
                 <div className="cf-item-header" onClick={() => setExpandedField(expandedField === f.id ? null : f.id)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
                     <Icon name={expandedField === f.id ? 'expand_less' : 'expand_more'} size={20} />
-                    <span className="cf-item-name">{f.name}</span>
+                    {editingNameId === f.id ? (
+                      <input
+                        className="form-input"
+                        style={{ width: '200px', padding: '0.2rem 0.5rem', fontSize: 'var(--font-size-sm)' }}
+                        value={editingNameValue}
+                        onChange={e => setEditingNameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveName(f.id); if (e.key === 'Escape') setEditingNameId(null); }}
+                        onBlur={() => handleSaveName(f.id)}
+                        onClick={e => e.stopPropagation()}
+                        autoFocus
+                      />
+                    ) : (
+                      <>
+                        <span className="cf-item-name">{f.name}</span>
+                        <button className="btn-icon" onClick={e => { e.stopPropagation(); startEditName(f); }} title="名前を変更">
+                          <Icon name="edit" size={14} />
+                        </button>
+                      </>
+                    )}
                     <span className="badge badge-info">{f.options?.length || 0}個の選択肢</span>
                   </div>
                   <button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); handleDeleteField(f); }}>

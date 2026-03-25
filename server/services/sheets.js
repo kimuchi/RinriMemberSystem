@@ -101,7 +101,7 @@ class SheetsService {
 
     await this.sheets.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
-      range: `${sheetName}!A:A`,
+      range: `${sheetName}!A1`,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
@@ -184,6 +184,23 @@ class SheetsService {
       requestBody: { values: [[columnName]] },
     });
     this.invalidateCache(sheetName);
+  }
+
+  async renameColumn(sheetName, oldName, newName) {
+    await this.init();
+    const { headerMap } = await this.getSheetData(sheetName);
+    const colIndex = headerMap[oldName];
+    if (colIndex === undefined) return false;
+
+    const colLetter = this.colToLetter(colIndex);
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.spreadsheetId,
+      range: `${sheetName}!${colLetter}1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[newName]] },
+    });
+    this.invalidateCache(sheetName);
+    return true;
   }
 
   // ============ Custom Fields ============

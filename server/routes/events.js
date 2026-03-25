@@ -63,22 +63,29 @@ router.get('/:id', async (req, res) => {
     const { data: attendance } = await sheets.getSheetData('イベント出席');
     const { data: members } = await sheets.getSheetData('会員名簿');
 
+    // ふりがなマップを作成
+    const furiganaMap = {};
+    members.forEach(m => { furiganaMap[m['ID']] = m['ふりがな'] || ''; });
+
     const eventAttendance = attendance
       .filter(a => a['イベントID'] === req.params.id)
       .map(a => ({
         id: a['ID'],
         memberId: a['会員ID'],
         memberName: a['氏名'],
+        memberFurigana: furiganaMap[a['会員ID']] || '',
         status: a['出席状態'],
         notes: a['備考'],
         _rowIndex: a._rowIndex,
-      }));
+      }))
+      .sort((a, b) => (a.memberFurigana || '').localeCompare(b.memberFurigana || '', 'ja'));
 
-    // 未登録の会員一覧も返す
+    // 未登録の会員一覧も返す（五十音順）
     const attendedMemberIds = new Set(eventAttendance.map(a => a.memberId));
     const unregistered = members
       .filter(m => !attendedMemberIds.has(m['ID']))
-      .map(m => ({ id: m['ID'], name: m['氏名'] }));
+      .map(m => ({ id: m['ID'], name: m['氏名'], furigana: m['ふりがな'] || '' }))
+      .sort((a, b) => (a.furigana || '').localeCompare(b.furigana || '', 'ja'));
 
     res.json({
       event: {

@@ -346,13 +346,15 @@ router.post('/execute', async (req, res) => {
       });
       registeredCount++;
 
-      // 会員情報の更新
+      // 会員情報の更新（個別セル更新で安全に）
       if (entry.updates && Object.keys(entry.updates).length > 0) {
         const { data: members } = await sheets.getSheetData('会員名簿');
         const member = members.find(m => m['ID'] === entry.memberId);
         if (member) {
-          const updatedData = { ...member, ...entry.updates, '更新日': new Date().toISOString() };
-          await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
+          for (const [field, value] of Object.entries(entry.updates)) {
+            await sheets.updateCell('会員名簿', member._rowIndex, field, value);
+          }
+          await sheets.updateCell('会員名簿', member._rowIndex, '更新日', new Date().toISOString());
           updatedCount++;
         }
       }

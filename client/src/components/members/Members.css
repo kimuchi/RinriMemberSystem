@@ -1,5 +1,10 @@
 .member-page { max-width: 1200px; }
 
+/* Table column sizing */
+.th-name { min-width: 160px; }
+.th-wrap { white-space: normal !important; min-width: 80px; max-width: 150px; }
+.td-recent-events { max-width: 180px; }
+
 .filter-bar {
   display: flex;
   gap: var(--space-md);
@@ -96,10 +101,54 @@
   font-size: var(--font-size-xs);
 }
 
+/* Event history controls */
+.event-history-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+  flex-wrap: wrap;
+}
+
+/* Event history columns */
+.th-event-col {
+  white-space: normal !important;
+  min-width: 50px;
+  max-width: 80px;
+  font-size: var(--font-size-xs) !important;
+  text-align: center !important;
+}
+.th-event-count {
+  min-width: 70px;
+  text-align: center !important;
+}
+.td-event-cell {
+  text-align: center;
+  padding: 0.3rem !important;
+}
+.td-event-count {
+  text-align: center;
+  white-space: nowrap;
+}
+.attendance-count {
+  font-weight: 600;
+  font-size: var(--font-size-base);
+  margin-right: 2px;
+}
+
+/* Event status marks */
+.ev-mark { font-weight: 600; font-size: var(--font-size-sm); }
+.ev-attended { color: var(--color-success); }
+.ev-pre { color: var(--color-primary); }
+.ev-absent { color: var(--color-danger); }
+.ev-late { color: var(--color-warning); font-size: var(--font-size-xs); }
+.ev-none { color: var(--color-text-muted); }
+
 /* Hide on mobile */
 @media (max-width: 768px) {
   .hide-mobile { display: none; }
   .member-form-grid { grid-template-columns: 1fr; }
   .filter-bar { flex-direction: column; }
   .filter-bar .form-select { max-width: 100% !important; }
+  .event-history-controls { flex-direction: column; align-items: flex-start; }
 }

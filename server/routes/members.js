@@ -59,17 +59,15 @@ async function autoFillMembers(data) {
     }
   }
 
-  // バックグラウンドで順次書き戻す（updateRowで1行まとめて更新、rate limit回避）
-  if (updates.length > 0) {
-    (async () => {
-      try {
-        for (const { rowIndex, member } of updates) {
-          await sheets.updateRow('会員名簿', rowIndex, member);
-        }
-      } catch (err) {
-        console.error('Auto-fill write-back error:', err);
-      }
-    })();
+  // ID・登録日・更新日のみを個別セル更新（行全体を上書きしない安全な方法）
+  for (const { rowIndex, member } of updates) {
+    try {
+      if (member['ID']) await sheets.updateCell('会員名簿', rowIndex, 'ID', member['ID']);
+      if (member['登録日']) await sheets.updateCell('会員名簿', rowIndex, '登録日', member['登録日']);
+      if (member['更新日']) await sheets.updateCell('会員名簿', rowIndex, '更新日', member['更新日']);
+    } catch (err) {
+      console.error('Auto-fill write-back error:', err);
+    }
   }
 
   return data;
@@ -120,15 +118,25 @@ router.get('/', async (req, res) => {
 
     // イベント参加情報を取得
     const { data: events } = await sheets.getSheetData('イベント');
-    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const { data: attendanceData } = await sheets.getSheetData('イベント出席');
 
     // イベントIDから情報を引けるようにする
     const eventMap = {};
     events.forEach(e => { eventMap[e['ID']] = e; });
 
-    // 会員ID → 参加イベント一覧（日付降順で最新3件）
+    // イベント一覧（日付降順）
+    const eventList = events
+      .map(e => ({
+        id: e['ID'],
+        name: e['イベント名'],
+        type: e['種類'] || '',
+        date: e['日時'] || '',
+      }))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // 会員ID → 全参加イベント一覧（日付降順）
     const memberEvents = {};
-    attendance.forEach(a => {
+    attendanceData.forEach(a => {
       const mid = a['会員ID'];
       if (!mid) return;
       if (!memberEvents[mid]) memberEvents[mid] = [];
@@ -137,21 +145,21 @@ router.get('/', async (req, res) => {
         eventId: a['イベントID'],
         eventName: ev ? ev['イベント名'] : '',
         eventDate: ev ? ev['日時'] : '',
+        eventType: ev ? ev['種類'] : '',
         status: a['出席状態'],
       });
     });
-    // 日付降順ソート、最新3件
     for (const mid of Object.keys(memberEvents)) {
       memberEvents[mid].sort((a, b) => (b.eventDate || '').localeCompare(a.eventDate || ''));
-      memberEvents[mid] = memberEvents[mid].slice(0, 3);
     }
 
     const members = data.map(m => {
       const fm = formatMember(m, customFields, extraFields);
-      fm.recentEvents = memberEvents[m['ID']] || [];
+      fm.allEvents = memberEvents[m['ID']] || [];
+      fm.recentEvents = (memberEvents[m['ID']] || []).slice(0, 3);
       return fm;
     });
-    res.json({ members, customFields, extraFields });
+    res.json({ members, customFields, extraFields, eventList });
   } catch (err) {
     console.error('Get members error:', err);
     res.status(500).json({ error: '会員一覧の取得に失敗しました' });

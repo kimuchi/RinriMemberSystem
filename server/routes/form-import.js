@@ -305,21 +305,34 @@ router.post('/execute', async (req, res) => {
     let registeredCount = 0;
     let updatedCount = 0;
     let newMemberCount = 0;
+    let skippedCount = 0;
+
+    // 既登録の出席データを取得（二重登録防止）
+    const { data: existingAttendance } = await sheets.getSheetData('イベント出席');
+    const alreadyRegistered = new Set(
+      existingAttendance.filter(a => a['イベントID'] === eventId).map(a => a['会員ID'])
+    );
 
     // 既存会員の出席登録
     for (const entry of (entries || [])) {
-      const attId = sheets.generateId();
-      await sheets.appendRow('イベント出席', {
-        'ID': attId,
-        'イベントID': eventId,
-        '会員ID': entry.memberId,
-        '氏名': entry.memberName,
-        '出席状態': '事前登録',
-        '備考': entry.participationType || '',
-      });
-      registeredCount++;
+      // 既に登録済みの会員はスキップ
+      if (alreadyRegistered.has(entry.memberId)) {
+        skippedCount++;
+      } else {
+        const attId = sheets.generateId();
+        await sheets.appendRow('イベント出席', {
+          'ID': attId,
+          'イベントID': eventId,
+          '会員ID': entry.memberId,
+          '氏名': entry.memberName,
+          '出席状態': '事前登録',
+          '備考': entry.participationType || '',
+        });
+        alreadyRegistered.add(entry.memberId); // 同バッチ内の重複も防止
+        registeredCount++;
+      }
 
-      // 会員情報の更新（個別セル更新で安全に）
+      // 会員情報の更新（既に出席登録済みでも情報は更新する）
       if (entry.updates && Object.keys(entry.updates).length > 0) {
         const { data: members } = await sheets.getSheetData('会員名簿');
         const member = members.find(m => m['ID'] === entry.memberId);
@@ -365,7 +378,7 @@ router.post('/execute', async (req, res) => {
       registeredCount++;
     }
 
-    res.json({ success: true, registeredCount, updatedCount, newMemberCount });
+    res.json({ success: true, registeredCount, updatedCount, newMemberCount, skippedCount });
   } catch (err) {
     console.error('Form execute error:', err);
     res.status(500).json({ error: '取り込みに失敗しました' });

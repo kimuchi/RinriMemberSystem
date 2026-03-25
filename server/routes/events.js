@@ -213,7 +213,19 @@ router.post('/:id/attendance/bulk', async (req, res) => {
     if (!members || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ error: '会員が選択されていません' });
     }
-    const rows = members.map(m => ({
+
+    // 既に登録済みの会員をスキップ（二重登録防止）
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const alreadyRegistered = new Set(
+      attendance.filter(a => a['イベントID'] === req.params.id).map(a => a['会員ID'])
+    );
+    const newMembers = members.filter(m => !alreadyRegistered.has(m.id));
+
+    if (newMembers.length === 0) {
+      return res.json({ success: true, count: 0, skipped: members.length });
+    }
+
+    const rows = newMembers.map(m => ({
       'ID': sheets.generateId(),
       'イベントID': req.params.id,
       '会員ID': m.id,
@@ -222,7 +234,7 @@ router.post('/:id/attendance/bulk', async (req, res) => {
       '備考': '',
     }));
     await sheets.appendRows('イベント出席', rows);
-    res.json({ success: true, count: members.length });
+    res.json({ success: true, count: newMembers.length, skipped: members.length - newMembers.length });
   } catch (err) {
     console.error('Bulk attendance error:', err);
     res.status(500).json({ error: '一括登録に失敗しました' });

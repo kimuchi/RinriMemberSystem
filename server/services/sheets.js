@@ -112,15 +112,15 @@ class SheetsService {
   async appendRows(sheetName, rowDataArray) {
     if (!rowDataArray || rowDataArray.length === 0) return;
     await this.init();
-    const { headers } = await this.getSheetData(sheetName);
+    const { headers, data } = await this.getSheetData(sheetName);
     const rows = rowDataArray.map(rowData => headers.map(h => rowData[h] || ''));
-    console.log(`appendRows(${sheetName}): ${rows.length} rows`);
+    const startRow = data.length + 2; // ヘッダー(1行目) + 既存データ行数 + 1
+    console.log(`appendRows(${sheetName}): ${rows.length} rows at row ${startRow}`);
 
-    await this.sheets.spreadsheets.values.append({
+    await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.spreadsheetId,
-      range: `${sheetName}!A1`,
+      range: `${sheetName}!A${startRow}`,
       valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
       requestBody: { values: rows },
     });
     this.invalidateCache(sheetName);

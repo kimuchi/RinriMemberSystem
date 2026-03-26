@@ -129,25 +129,36 @@ headers.forEach((h, i) => { headerMap[h] = i; });
 
 ## 4. デプロイガイド
 
-### Step 1: リポジトリのクローン
+このガイドに従うだけで、ゼロからデプロイが完了します。
+
+### Step 1: リポジトリのクローンと依存パッケージ
 
 ```bash
 git clone https://github.com/YOUR_ORG/rinri-member-system.git
 cd rinri-member-system
+npm run install:all
 ```
 
 ### Step 2: GCP初期セットアップ
 
 ```bash
 npm run deploy:init
-# 対話形式でプロジェクトID、リージョン、ドメインを入力
 ```
 
-このスクリプトが行うこと：
-- GCPプロジェクト設定
-- 必要なAPIの有効化
-- Artifact Registryリポジトリ作成
-- サービスアカウント作成
+対話形式で以下を入力します：
+- **GCPプロジェクトID**: Google Cloud Console で作成済みのプロジェクト（課金有効化済み）
+- **Cloud Runリージョン**: `asia-northeast1`（東京）推奨、Enterでデフォルト
+- **Cloud Runサービス名**: `rinri-member-system` 推奨、Enterでデフォルト
+- **独自ドメイン**: 例 `staff.marunouchi-rinri.org`
+
+このスクリプトが自動で行うこと：
+1. GCPプロジェクトの設定
+2. 必要なAPI（Cloud Run, Cloud Build, Artifact Registry, Sheets API, Drive API, Secret Manager）の有効化
+3. Artifact Registryリポジトリ（docker-repo）の作成
+4. サービスアカウント（`rinri-system-sa`）の作成
+5. シークレットの登録（OAuth情報、スプレッドシートID等を対話入力）
+
+> **注意**: スクリプト実行前に gcloud CLI のインストールとログイン（`gcloud auth login`）が必要です。
 
 ### Step 3: Googleスプレッドシートの作成
 
@@ -161,157 +172,187 @@ npm run deploy:init
    ```
    rinri-system-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com
    ```
-   - 又は Cloud Run のデフォルトサービスアカウント：
-   ```
-   PROJECT_NUMBER-compute@developer.gserviceaccount.com
-   ```
 
 > **注意**: シートやヘッダーは初回ログイン時に自動作成されます。空のスプレッドシートで大丈夫です。
+> Step 2 でシークレット登録をスキップした場合は、[Step 3b: 手動でシークレットを登録](#step-3b-手動でシークレットを登録任意) を実行してください。
 
 ### Step 4: Google OAuth 2.0 クレデンシャルの作成
 
-1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
-2. **APIs & Services** → **Credentials**
-3. **認証情報を作成** → **OAuthクライアントID**
-4. アプリケーションの種類: **ウェブアプリケーション**
-5. 承認済みリダイレクトURI に追加:
+1. [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services** → **Credentials**
+2. **認証情報を作成** → **OAuthクライアントID**
+3. アプリケーションの種類: **ウェブアプリケーション**
+4. 承認済みリダイレクトURI に追加:
    ```
    https://あなたのドメイン/auth/callback
    ```
-6. 作成後、**クライアントID** と **クライアントシークレット** をメモ
+5. 作成後、**クライアントID** と **クライアントシークレット** をメモ
 
-> **OAuth同意画面** も設定が必要です。テスト中は「外部」→テストユーザーを追加。
-> 本番公開時は「本番環境に公開」を実施してください。
+> **OAuth同意画面** の設定も必要です：
+> - テスト中: 「外部」を選択 → テストユーザーにメールアドレスを追加
+> - 本番公開時: 「本番環境に公開」を実施
 
-### Step 5: Secret Manager にシークレットを登録
+Step 2 でシークレット登録済みの場合は Step 5 へ進んでください。
+
+### Step 3b: 手動でシークレットを登録（任意）
+
+Step 2 でシークレット登録をスキップした場合のみ実行：
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
 
-# 各シークレットを作成
-echo -n 'YOUR_GOOGLE_CLIENT_ID' | \
-  gcloud secrets create GOOGLE_CLIENT_ID --data-file=-
+echo -n 'YOUR_GOOGLE_CLIENT_ID' | gcloud secrets create GOOGLE_CLIENT_ID --data-file=-
+echo -n 'YOUR_GOOGLE_CLIENT_SECRET' | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-
+echo -n 'YOUR_SPREADSHEET_ID' | gcloud secrets create SPREADSHEET_ID --data-file=-
+echo -n "$(openssl rand -base64 32)" | gcloud secrets create JWT_SECRET --data-file=-
+echo -n 'https://あなたのドメイン/auth/callback' | gcloud secrets create REDIRECT_URI --data-file=-
 
-echo -n 'YOUR_GOOGLE_CLIENT_SECRET' | \
-  gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-
-
-echo -n 'YOUR_SPREADSHEET_ID' | \
-  gcloud secrets create SPREADSHEET_ID --data-file=-
-
-# JWT_SECRET はランダム文字列を生成
-echo -n "$(openssl rand -base64 32)" | \
-  gcloud secrets create JWT_SECRET --data-file=-
-
-echo -n 'https://あなたのドメイン/auth/callback' | \
-  gcloud secrets create REDIRECT_URI --data-file=-
+# サービスアカウントにシークレットへのアクセス権を付与
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:rinri-system-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
 ```
 
-サービスアカウントにシークレットへのアクセス権を付与：
-
-```bash
-PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
-
-for SECRET in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SPREADSHEET_ID JWT_SECRET REDIRECT_URI; do
-  gcloud secrets add-iam-policy-binding $SECRET \
-    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor"
-done
-```
-
-### Step 6: Cloud Run にデプロイ
+### Step 5: Cloud Run にデプロイ
 
 ```bash
 npm run deploy:cloudrun
 ```
 
-環境変数でカスタマイズ可能：
-```bash
-GCP_PROJECT_ID=my-project \
-GCP_REGION=asia-northeast1 \
-CLOUD_RUN_SERVICE=rinri-member-system \
-npm run deploy:cloudrun
+デプロイ完了後、Cloud Run が生成するURL（例: `https://rinri-member-system-xxxxxxxx-an.a.run.app`）が表示されます。
+まずこのURLでアプリが動作することを確認してください。
+
+> 環境変数でカスタマイズも可能です：
+> ```bash
+> GCP_PROJECT_ID=my-project GCP_REGION=asia-northeast1 npm run deploy:cloudrun
+> ```
+
+### Step 6: 独自ドメインの設定
+
+1. [Cloud Run コンソール](https://console.cloud.google.com/run) でサービスを選択
+2. 上部メニューの **「カスタムドメインを管理」** をクリック
+3. ドメインマッピングのタイプ: **「Cloud Run ドメインマッピング」** を選択
+4. 対象サービスを選択し、ドメイン名を入力
+5. 表示されるDNSレコード情報に従い、ドメインレジストラのDNS設定で以下を追加：
+
+```
+タイプ: CNAME
+ホスト名: staff.marunouchi-rinri.org（あなたのドメイン）
+値: ghs.googlehosted.com.
 ```
 
-### Step 7: 独自ドメインの設定
+> - DNS反映には数分〜最大48時間かかることがあります
+> - SSL証明書は Google が自動で発行・管理します
 
-1. Cloud Run コンソールでサービスを選択
-2. **カスタムドメイン** → **マッピングを追加**
-3. ドメインを入力して確認
-4. DNSプロバイダーで以下のレコードを追加:
-
-```
-CNAME  staff.marunouchi-rinri.org  →  ghs.googlehosted.com
-```
-
-SSL証明書は Google が自動発行します（反映まで最大24時間）。
-
-### Step 8: 初回ログイン
+### Step 7: 初回ログイン
 
 1. ブラウザで `https://あなたのドメイン` にアクセス
 2. Googleアカウントでログイン
-3. **最初にログインしたユーザーがオーナー**として登録される
+3. **最初にログインしたユーザーがオーナー**として自動登録される
 4. 単会名を入力してセットアップ完了
 5. スプレッドシートに全シートとヘッダーが自動作成される
 
-### GitHub Actions によるCI/CDセットアップ
+### Step 8: GitHub Actions によるCI/CDセットアップ
+
+mainブランチへのpushで自動デプロイされる仕組みを構築します。
 
 #### 自動セットアップ（推奨）
-
-Workload Identity Federation の設定を自動化するスクリプトを用意しています。
 
 ```bash
 npm run setup:cicd
 ```
 
-対話形式で以下を入力するだけで、WIF Pool/Provider 作成、サービスアカウントへのバインド、必要なIAMロール付与がすべて自動で行われます：
+対話形式で以下を入力：
+- **GCPプロジェクトID**
+- **GitHubリポジトリ名**: `your-org/rinri-member-system`（大文字小文字に注意）
+- **Cloud Runリージョン**: Enterでデフォルト（`asia-northeast1`）
+- **Cloud Runサービス名**: Enterでデフォルト（`rinri-member-system`）
+- **Workload Identity Pool ID**: Enterでデフォルト（`github-pool`）
+- **Workload Identity Provider ID**: Enterでデフォルト（`github-provider`）
 
-- GCPプロジェクトID
-- GitHubリポジトリ名（例: `your-org/rinri-member-system`）
-- Cloud Runリージョン（デフォルト: `asia-northeast1`）
-- Cloud Runサービス名（デフォルト: `rinri-member-system`）
-
-スクリプト完了後、表示される値をGitHubリポジトリの Secrets に設定してください。
+スクリプトが自動で行うこと：
+1. IAM Credentials API の有効化
+2. Workload Identity Pool の作成
+3. Workload Identity Provider の作成（`--attribute-condition` によるリポジトリ制限つき）
+4. サービスアカウントへの Workload Identity バインド
+5. サービスアカウントへの必要なIAMロール付与（Cloud Run Admin, Artifact Registry Writer, Cloud Build Builder, Service Account User）
 
 #### 手動セットアップ
 
-自動スクリプトを使わない場合は以下を実行：
+自動スクリプトを使わない場合は以下を実行（Linux/macOS）：
 
 ```bash
+PROJECT_ID="your-project-id"
+REPO="your-org/rinri-member-system"
+
 # Workload Identity Pool 作成
 gcloud iam workload-identity-pools create "github-pool" \
   --project="$PROJECT_ID" \
   --location="global" \
   --display-name="GitHub Actions Pool"
 
-# Provider 作成
+# Provider 作成（--attribute-condition が必須）
 gcloud iam workload-identity-pools providers create-oidc "github-provider" \
   --project="$PROJECT_ID" \
   --location="global" \
   --workload-identity-pool="github-pool" \
   --display-name="GitHub Provider" \
   --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='${REPO}'" \
   --issuer-uri="https://token.actions.githubusercontent.com"
 
 # サービスアカウントへのバインド
 SA_EMAIL="rinri-system-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-REPO="YOUR_GITHUB_ORG/rinri-member-system"
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
 
 gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --project="$PROJECT_ID" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')/locations/global/workloadIdentityPools/github-pool/attribute.repository/${REPO}"
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/${REPO}"
+
+# 必要なIAMロールを付与
+for ROLE in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.builder roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${SA_EMAIL}" --role="$ROLE"
+done
 ```
+
+Windows（コマンドプロンプト）の場合：
+```cmd
+gcloud iam workload-identity-pools providers create-oidc github-provider ^
+  --project=YOUR_PROJECT_ID ^
+  --location=global ^
+  --workload-identity-pool=github-pool ^
+  --display-name="GitHub Provider" ^
+  --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" ^
+  --attribute-condition="assertion.repository=='your-org/rinri-member-system'" ^
+  --issuer-uri="https://token.actions.githubusercontent.com"
+```
+
+> **重要**: `--attribute-condition` は必須です。これがないと Provider の作成が失敗します。
 
 #### GitHub Secrets に設定
 
-| Secret Name | 値 |
-|-------------|------|
-| `GCP_PROJECT_ID` | GCPプロジェクトID |
-| `WIF_PROVIDER` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/providers/github-provider` |
-| `WIF_SERVICE_ACCOUNT` | `rinri-system-sa@PROJECT_ID.iam.gserviceaccount.com` |
+スクリプト完了時に表示される値を、GitHubリポジトリの **Settings → Secrets and variables → Actions → New repository secret** に登録します。
+
+| Secret Name | 値 | 例 |
+|-------------|------|-----|
+| `GCP_PROJECT_ID` | GCPプロジェクトID | `marunouchi-rinri` |
+| `WIF_PROVIDER` | Provider のフルパス | `projects/123456789/locations/global/workloadIdentityPools/github-pool/providers/github-provider` |
+| `WIF_SERVICE_ACCOUNT` | サービスアカウントのメール | `rinri-system-sa@marunouchi-rinri.iam.gserviceaccount.com` |
+
+> **注意**: `WIF_PROVIDER` の `projects/` の後は**プロジェクト番号（数字）**です。プロジェクトID（文字列）ではありません。
 
 設定後、`main` ブランチへの push で自動デプロイされます。
-`workflow_dispatch` にも対応しているため、GitHub Actions の画面から手動実行も可能です。
+GitHub Actions の画面から手動実行（`workflow_dispatch`）も可能です。
+
+#### CI/CDのトラブルシューティング
+
+| エラー | 原因 | 対処 |
+|--------|------|------|
+| `invalid_target` / Pool or provider doesn't exist | Providerが未作成 or 削除済み | `gcloud iam workload-identity-pools providers list --workload-identity-pool=github-pool --location=global` で確認 |
+| `attribute condition must reference` | `--attribute-condition` が未指定 | Provider作成時に `--attribute-condition` を付けて再作成 |
+| `WIF_PROVIDER` の値が不正 | プロジェクトIDとプロジェクト番号を混同 | `gcloud projects describe PROJECT_ID --format="value(projectNumber)"` で番号を確認 |
+| Permission denied on deploy | サービスアカウントの権限不足 | `roles/run.admin`, `roles/artifactregistry.writer` 等が付与されているか確認 |
 
 ---
 

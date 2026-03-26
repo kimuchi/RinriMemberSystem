@@ -119,7 +119,7 @@ async function main() {
   console.log("");
   console.log(">>> Workload Identity Provider を作成中...");
   if (!run(
-    `gcloud iam workload-identity-pools providers create-oidc "${providerId}" --project="${projectId}" --location="global" --workload-identity-pool="${poolId}" --display-name="GitHub Provider" --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" --issuer-uri="https://token.actions.githubusercontent.com"`,
+    `gcloud iam workload-identity-pools providers create-oidc "${providerId}" --project="${projectId}" --location="global" --workload-identity-pool="${poolId}" --display-name="GitHub Provider" --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" --attribute-condition="assertion.repository=='${githubRepo}'" --issuer-uri="https://token.actions.githubusercontent.com"`,
     { ignoreError: true }
   )) {
     console.log("  (既に存在します)");

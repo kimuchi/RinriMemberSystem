@@ -68,4 +68,4 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --project ${{ env.GCP_PROJECT_ID }} \
             --format='value(status.url)')
-          echo "🚀 Deployed to: $URL"
+          echo "Deployed to: $URL"

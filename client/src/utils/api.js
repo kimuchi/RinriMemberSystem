@@ -62,6 +62,13 @@ export const api = {
   executeFormImport: (eventId, entries, newMembers) =>
     apiFetch(`/api/events/${eventId}/form/execute`, { method: 'POST', body: JSON.stringify({ entries, newMembers }) }),
 
+  // CSV Import
+  getImportFields: () => apiFetch('/api/members/import/fields'),
+  previewCsvImport: (data) =>
+    apiFetch('/api/members/import/preview', { method: 'POST', body: JSON.stringify(data) }),
+  executeCsvImport: (updates, newMembers) =>
+    apiFetch('/api/members/import/execute', { method: 'POST', body: JSON.stringify({ updates, newMembers }) }),
+
   // Settings
   getUsers: () => apiFetch('/api/settings/users'),
   addUser: (data) => apiFetch('/api/settings/users', { method: 'POST', body: JSON.stringify(data) }),

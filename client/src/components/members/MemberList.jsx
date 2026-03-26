@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../utils/api';
 import { useApp } from '../../App';
 import Icon from '../Icon';
+import CSVImport from './CSVImport';
 import './Members.css';
 
 export default function MemberList() {
@@ -21,6 +22,9 @@ export default function MemberList() {
   const [efFilters, setEfFilters] = useState({});
   const [sortKey, setSortKey] = useState('furigana');
   const [sortDir, setSortDir] = useState('asc');
+
+  // CSVインポート
+  const [showCsvImport, setShowCsvImport] = useState(false);
 
   // イベント参加履歴の表示設定
   const [showEventHistory, setShowEventHistory] = useState(false);
@@ -201,10 +205,16 @@ export default function MemberList() {
           <h1 className="page-title">会員名簿</h1>
           <p className="page-subtitle">{filtered.length}件表示 / {members.length}件中</p>
         </div>
-        <button className="btn btn-primary" onClick={() => navigate('/members/new')}>
-          <Icon name="person_add" size={18} />
-          新規追加
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+          <button className="btn btn-secondary" onClick={() => setShowCsvImport(true)}>
+            <Icon name="upload_file" size={18} />
+            CSVインポート
+          </button>
+          <button className="btn btn-primary" onClick={() => navigate('/members/new')}>
+            <Icon name="person_add" size={18} />
+            新規追加
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -409,6 +419,13 @@ export default function MemberList() {
           </tbody>
         </table>
       </div>
+
+      {showCsvImport && (
+        <CSVImport
+          onClose={() => setShowCsvImport(false)}
+          onImported={() => { setShowCsvImport(false); setLoading(true); loadData(); }}
+        />
+      )}
     </div>
   );
 }

@@ -200,10 +200,13 @@ export default function FormImport({ eventId, onImported }) {
       }
       setDupSelection(dupDefaults);
 
-      // デフォルトで照合済み（未登録）を全員チェック（重複は選択された方のみ）
+      // デフォルトで照合済み（未登録）と「既登録だが差分あり」を全員チェック
+      // （重複は選択された方のみ）
       const checkedSet = new Set();
       for (const entry of res.entries) {
-        if (entry.matched && !entry.alreadyRegistered) {
+        // 未登録のマッチ済み or 既登録でも差分がある → デフォルトでチェック
+        const eligible = entry.matched && (!entry.alreadyRegistered || entry.diffs.length > 0);
+        if (eligible) {
           if (entry.duplicateGroup) {
             if (dupDefaults[entry.duplicateGroup] === entry.formRow) {
               checkedSet.add(entry.formRow);
@@ -246,7 +249,8 @@ export default function FormImport({ eventId, onImported }) {
   async function handleExecute() {
     if (!preview) return;
 
-    const toImport = preview.entries.filter(e => e.matched && !e.alreadyRegistered && matchedChecked.has(e.formRow));
+    // 既登録の会員もチェックされていれば送る（サーバー側で attendance は skip し、updates だけ反映）
+    const toImport = preview.entries.filter(e => e.matched && matchedChecked.has(e.formRow));
     const toAddNew = preview.entries.filter(e => !e.matched && newMemberChecked.has(e.formRow));
 
     if (toImport.length === 0 && toAddNew.length === 0) {
@@ -313,6 +317,15 @@ export default function FormImport({ eventId, onImported }) {
     } catch (err) {
       toast.error(err.message);
     }
+  }
+
+  function buildExecuteLabel(registerCount, newCount, updateOnlyCount) {
+    const parts = [];
+    if (registerCount > 0) parts.push(`${registerCount}名登録`);
+    if (newCount > 0) parts.push(`新規${newCount}名`);
+    if (updateOnlyCount > 0) parts.push(`${updateOnlyCount}名更新`);
+    if (parts.length === 0) return '実行';
+    return parts.join(' + ') + 'を実行';
   }
 
   // ==================== レンダリング ====================
@@ -525,8 +538,16 @@ export default function FormImport({ eventId, onImported }) {
   function renderPreview() {
     if (!preview) return null;
 
+    // マッチ済み・未登録（→ 出席登録の対象）
     const matched = preview.entries.filter(e => e.matched && !e.alreadyRegistered);
-    const alreadyReg = preview.entries.filter(e => e.alreadyRegistered);
+    // マッチ済み・既登録・差分あり（→ 出席はskipされるが情報の更新は反映できる）
+    const registeredUpdatable = preview.entries.filter(
+      e => e.matched && e.alreadyRegistered && e.diffs.length > 0
+    );
+    // マッチ済み・既登録・差分なし（→ 完全にスキップ）
+    const alreadyRegNoUpdate = preview.entries.filter(
+      e => e.matched && e.alreadyRegistered && e.diffs.length === 0
+    );
     const unmatched = preview.entries.filter(e => !e.matched);
 
     // 重複グループを構築
@@ -540,15 +561,18 @@ export default function FormImport({ eventId, onImported }) {
     const hasDuplicates = Object.keys(dupGroups).length > 0;
 
     // 重複でないか、重複グループで選択された方のみ表示
-    const uniqueMatched = matched.filter(e =>
+    const filterByDup = arr => arr.filter(e =>
       !e.duplicateGroup || dupSelection[e.duplicateGroup] === e.formRow
     );
-    const uniqueUnmatched = unmatched.filter(e =>
-      !e.duplicateGroup || dupSelection[e.duplicateGroup] === e.formRow
-    );
+    const uniqueMatched = filterByDup(matched);
+    const uniqueRegisteredUpdatable = filterByDup(registeredUpdatable);
+    const uniqueUnmatched = filterByDup(unmatched);
 
-    const withDiffs = uniqueMatched.filter(e => e.diffs.length > 0);
+    // 差分解決セクションには「未登録のマッチ」と「既登録だが差分あり」の両方を表示
+    const allDiffEntries = [...uniqueMatched, ...uniqueRegisteredUpdatable];
+    const withDiffs = allDiffEntries.filter(e => e.diffs.length > 0);
     const checkedMatched = uniqueMatched.filter(e => matchedChecked.has(e.formRow));
+    const checkedUpdateOnly = uniqueRegisteredUpdatable.filter(e => matchedChecked.has(e.formRow));
 
     return (
       <div className="form-preview">
@@ -562,8 +586,14 @@ export default function FormImport({ eventId, onImported }) {
             <span className="summary-count">{newMemberChecked.size}</span>
             <span>名新規追加</span>
           </div>
+          {uniqueRegisteredUpdatable.length > 0 && (
+            <div className="summary-item">
+              <span className="summary-count">{checkedUpdateOnly.length}</span>
+              <span>名情報更新</span>
+            </div>
+          )}
           <div className="summary-item">
-            <span className="summary-count">{alreadyReg.length}</span>
+            <span className="summary-count">{alreadyRegNoUpdate.length}</span>
             <span>名登録済み</span>
           </div>
           <div className="summary-item">
@@ -659,6 +689,54 @@ export default function FormImport({ eventId, onImported }) {
                   <span>{e.memberName}</span>
                   {e.participationType && <span className="badge badge-primary" style={{ fontSize: 'var(--font-size-xs)' }}>{e.participationType}</span>}
                   {e.diffs.length > 0 && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning)' }}>差異あり</span>}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 既登録だが情報の更新が必要な会員（出席はskip、情報のみ反映） */}
+        {uniqueRegisteredUpdatable.length > 0 && (
+          <div style={{ marginBottom: 'var(--space-md)' }}>
+            <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-primary)' }}>
+              <Icon name="edit_note" size={16} /> 既登録だが情報更新あり（{uniqueRegisteredUpdatable.length}名）
+            </h3>
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
+              出席は登録済みのため二重登録されません。チェックを入れると会員情報のみ更新します（追加列の値もここで取り込まれます）。
+            </p>
+            <div className="bulk-list" style={{ maxHeight: 200 }}>
+              <label className="bulk-check-item" style={{ fontWeight: 600, borderBottom: '1px solid var(--color-border)' }}>
+                <input
+                  type="checkbox"
+                  checked={uniqueRegisteredUpdatable.every(e => matchedChecked.has(e.formRow))}
+                  onChange={() => {
+                    const allChecked = uniqueRegisteredUpdatable.every(e => matchedChecked.has(e.formRow));
+                    setMatchedChecked(prev => {
+                      const next = new Set(prev);
+                      uniqueRegisteredUpdatable.forEach(e => allChecked ? next.delete(e.formRow) : next.add(e.formRow));
+                      return next;
+                    });
+                  }}
+                />
+                <span>全員選択</span>
+              </label>
+              {uniqueRegisteredUpdatable.map(e => (
+                <label key={e.formRow} className="bulk-check-item">
+                  <input
+                    type="checkbox"
+                    checked={matchedChecked.has(e.formRow)}
+                    onChange={() => {
+                      setMatchedChecked(prev => {
+                        const next = new Set(prev);
+                        if (next.has(e.formRow)) next.delete(e.formRow);
+                        else next.add(e.formRow);
+                        return next;
+                      });
+                    }}
+                  />
+                  <span>{e.memberName}</span>
+                  <span className="badge" style={{ fontSize: 'var(--font-size-xs)', background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}>出席登録済</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-warning)' }}>差異 {e.diffs.length}件</span>
                 </label>
               ))}
             </div>
@@ -787,14 +865,14 @@ export default function FormImport({ eventId, onImported }) {
           </div>
         )}
 
-        {/* 登録済み一覧 */}
-        {alreadyReg.length > 0 && (
+        {/* 登録済み一覧（情報更新もない人） */}
+        {alreadyRegNoUpdate.length > 0 && (
           <div style={{ marginTop: 'var(--space-md)' }}>
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)', color: 'var(--color-text-muted)' }}>
-              <Icon name="check" size={16} /> 既に登録済み（{alreadyReg.length}名 - スキップ）
+              <Icon name="check" size={16} /> 既に登録済み（{alreadyRegNoUpdate.length}名 - スキップ）
             </h3>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
-              {alreadyReg.map(e => <span key={e.formRow} style={{ marginRight: 'var(--space-sm)' }}>{e.memberName}</span>)}
+              {alreadyRegNoUpdate.map(e => <span key={e.formRow} style={{ marginRight: 'var(--space-sm)' }}>{e.memberName}</span>)}
             </div>
           </div>
         )}
@@ -804,10 +882,10 @@ export default function FormImport({ eventId, onImported }) {
           <button
             className="btn btn-primary"
             onClick={handleExecute}
-            disabled={executing || (matched.length === 0 && newMemberChecked.size === 0)}
+            disabled={executing || (checkedMatched.length === 0 && checkedUpdateOnly.length === 0 && newMemberChecked.size === 0)}
           >
             <Icon name="check_circle" size={16} />
-            {executing ? '登録中...' : `${matched.length + newMemberChecked.size}名を登録する${newMemberChecked.size > 0 ? `（新規${newMemberChecked.size}名含む）` : ''}`}
+            {executing ? '登録中...' : buildExecuteLabel(checkedMatched.length, newMemberChecked.size, checkedUpdateOnly.length)}
           </button>
           <button className="btn btn-secondary" onClick={() => setStep('ready')}>
             キャンセル

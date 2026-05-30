@@ -28,6 +28,13 @@ export default function EventDetail() {
   // 当日出席チェックモード
   const [checkMode, setCheckMode] = useState(false);
 
+  // エクスポートモーダル
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFields, setExportFields] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [selectedCols, setSelectedCols] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
+
   useEffect(() => { loadData(); }, [id]);
 
   async function loadData() {
@@ -151,6 +158,79 @@ export default function EventDetail() {
     }
   }
 
+  // エクスポート
+  async function openExportModal() {
+    setShowExportModal(true);
+    if (exportFields) return;
+    setExportLoading(true);
+    try {
+      const res = await api.getExportFields(id);
+      setExportFields(res);
+      // デフォルト: 氏名・出席状態・主要連絡先
+      const defaults = new Set([
+        'member:氏名',
+        'member:ふりがな',
+        'attendance:出席状態',
+        'member:会社名',
+        'member:メールアドレス',
+      ]);
+      const allCols = [...(res.attendance || []), ...(res.basic || []), ...(res.custom || []), ...(res.extra || [])];
+      const initial = new Set();
+      allCols.forEach(c => { if (defaults.has(c.key)) initial.add(c.key); });
+      setSelectedCols(initial);
+    } catch (err) {
+      toast.error(err.message);
+      setShowExportModal(false);
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  function toggleExportCol(key) {
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleExportGroup(group) {
+    const keys = group.map(c => c.key);
+    const allChecked = keys.length > 0 && keys.every(k => selectedCols.has(k));
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allChecked ? next.delete(k) : next.add(k));
+      return next;
+    });
+  }
+
+  async function handleExport() {
+    if (!exportFields) return;
+    if (selectedCols.size === 0) {
+      toast.warning('1列以上選択してください');
+      return;
+    }
+    // 表示順を保ってカラム配列を構築
+    const ordered = [
+      ...exportFields.attendance,
+      ...exportFields.basic,
+      ...exportFields.custom,
+      ...exportFields.extra,
+    ].filter(c => selectedCols.has(c.key));
+
+    setExporting(true);
+    try {
+      await api.exportEventAttendees(id, ordered);
+      toast.success('エクスポートしました');
+      setShowExportModal(false);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (loading) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
   }
@@ -241,15 +321,20 @@ export default function EventDetail() {
           <h2 style={{ fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
             出席管理（当日出席 {attended}名 / 事前登録 {preRegistered}名 / 全{attendance.length}名）
           </h2>
-          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
             {attendance.length > 0 && (
-              <button
-                className={`btn btn-sm ${checkMode ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setCheckMode(!checkMode)}
-              >
-                <Icon name="fact_check" size={16} />
-                {checkMode ? '通常モードに戻す' : '当日出席チェック'}
-              </button>
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={openExportModal}>
+                  <Icon name="download" size={16} /> Excelエクスポート
+                </button>
+                <button
+                  className={`btn btn-sm ${checkMode ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setCheckMode(!checkMode)}
+                >
+                  <Icon name="fact_check" size={16} />
+                  {checkMode ? '通常モードに戻す' : '当日出席チェック'}
+                </button>
+              </>
             )}
             {unregistered.length > 0 && (
               <button className="btn btn-primary btn-sm" onClick={openBulkModal}>
@@ -396,6 +481,86 @@ export default function EventDetail() {
           </div>
         </div>
       )}
+
+      {/* エクスポートモーダル */}
+      {showExportModal && (
+        <div className="modal-overlay" onClick={() => !exporting && setShowExportModal(false)}>
+          <div className="modal-content bulk-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Excelエクスポート</h2>
+              <button className="btn-icon" onClick={() => setShowExportModal(false)} disabled={exporting}>
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {exportLoading ? (
+                <div style={{ textAlign: 'center', padding: 'var(--space-lg)' }}><div className="spinner" /></div>
+              ) : !exportFields ? (
+                <p style={{ color: 'var(--color-text-muted)' }}>列情報を取得できませんでした</p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
+                    出力する列を選択してください（出席者{attendance.length}名）
+                  </p>
+                  <div className="bulk-list" style={{ maxHeight: 'none' }}>
+                    {renderExportGroup('出席情報', exportFields.attendance)}
+                    {renderExportGroup('基本情報', exportFields.basic)}
+                    {exportFields.custom.length > 0 && renderExportGroup('カスタムフィールド', exportFields.custom)}
+                    {exportFields.extra.length > 0 && renderExportGroup('追加列', exportFields.extra)}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                {selectedCols.size}列 選択中
+              </span>
+              <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                <button className="btn btn-secondary" onClick={() => setShowExportModal(false)} disabled={exporting}>
+                  キャンセル
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleExport}
+                  disabled={selectedCols.size === 0 || exporting || exportLoading}
+                >
+                  {exporting ? '出力中...' : 'エクスポート'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+
+  function renderExportGroup(title, cols) {
+    if (!cols || cols.length === 0) return null;
+    const allChecked = cols.every(c => selectedCols.has(c.key));
+    return (
+      <div key={title}>
+        <label className="bulk-check-item" style={{ fontWeight: 600, background: 'var(--color-bg-secondary)' }}>
+          <input
+            type="checkbox"
+            checked={allChecked}
+            onChange={() => toggleExportGroup(cols)}
+          />
+          <span>{title}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+            {cols.filter(c => selectedCols.has(c.key)).length} / {cols.length}
+          </span>
+        </label>
+        {cols.map(c => (
+          <label key={c.key} className="bulk-check-item" style={{ paddingLeft: 'var(--space-lg)' }}>
+            <input
+              type="checkbox"
+              checked={selectedCols.has(c.key)}
+              onChange={() => toggleExportCol(c.key)}
+            />
+            <span>{c.label}</span>
+          </label>
+        ))}
+      </div>
+    );
+  }
 }

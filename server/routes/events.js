@@ -1,7 +1,16 @@
 const express = require('express');
+const XLSX = require('xlsx');
 const sheets = require('../services/sheets');
 const formImportRouter = require('./form-import');
 const router = express.Router();
+
+// 会員名簿の基本列（カスタム/追加列の判定に使用）
+const MEMBER_BASIC_COLUMNS = new Set([
+  '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '備考',
+]);
+// エクスポート対象外のシステム列
+const MEMBER_SYSTEM_COLUMNS = new Set(['ID', '登録日', '更新日']);
 
 // フォーム連携サブルーター
 router.use('/:id/form', formImportRouter);
@@ -275,6 +284,110 @@ router.delete('/:eventId/attendance/:attId', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: '出席データの削除に失敗しました' });
+  }
+});
+
+/**
+ * GET /api/events/:id/export-fields - エクスポート可能な列の一覧
+ */
+router.get('/:id/export-fields', async (req, res) => {
+  try {
+    const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
+    const customFields = await sheets.getCustomFields();
+    const customFieldNames = new Set(customFields.map(cf => cf.name));
+
+    // 会員名簿の列をカテゴリ分け
+    const basic = [];
+    const custom = [];
+    const extra = [];
+    for (const h of memberHeaders) {
+      if (MEMBER_SYSTEM_COLUMNS.has(h)) continue;
+      const col = { key: `member:${h}`, label: h };
+      if (customFieldNames.has(h)) custom.push(col);
+      else if (MEMBER_BASIC_COLUMNS.has(h)) basic.push(col);
+      else extra.push(col);
+    }
+
+    // 出席シート由来の列
+    const attendance = [
+      { key: 'attendance:出席状態', label: '出席状態' },
+      { key: 'attendance:備考', label: '出席メモ' },
+    ];
+
+    res.json({ attendance, basic, custom, extra });
+  } catch (err) {
+    console.error('Get export fields error:', err);
+    res.status(500).json({ error: 'エクスポート列の取得に失敗しました' });
+  }
+});
+
+/**
+ * POST /api/events/:id/export - 出席者をExcel(xlsx)としてエクスポート
+ * body: { columns: [{ key: 'attendance:出席状態' | 'member:<col>', label: 'string' }] }
+ */
+router.post('/:id/export', async (req, res) => {
+  try {
+    const { columns } = req.body;
+    if (!Array.isArray(columns) || columns.length === 0) {
+      return res.status(400).json({ error: '出力する列を選択してください' });
+    }
+
+    const { data: events } = await sheets.getSheetData('イベント');
+    const event = events.find(e => e['ID'] === req.params.id);
+    if (!event) return res.status(404).json({ error: 'イベントが見つかりません' });
+
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const { data: members } = await sheets.getSheetData('会員名簿');
+
+    const memberById = {};
+    members.forEach(m => { memberById[m['ID']] = m; });
+
+    // 出席者（ふりがな順）
+    const rows = attendance
+      .filter(a => a['イベントID'] === req.params.id)
+      .map(a => ({ att: a, member: memberById[a['会員ID']] || {} }))
+      .sort((a, b) => (a.member['ふりがな'] || '').localeCompare(b.member['ふりがな'] || '', 'ja'));
+
+    const headerRow = columns.map(c => c.label || '');
+    const dataRows = rows.map(({ att, member }) => columns.map(col => {
+      const sep = col.key.indexOf(':');
+      if (sep < 0) return '';
+      const source = col.key.slice(0, sep);
+      const field = col.key.slice(sep + 1);
+      if (source === 'attendance') {
+        return att[field] || '';
+      }
+      if (source === 'member') {
+        // 氏名は名簿優先、欠落時は出席シートのコピーをフォールバック
+        if (field === '氏名') return member['氏名'] || att['氏名'] || '';
+        return member[field] || '';
+      }
+      return '';
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    XLSX.utils.book_append_sheet(wb, ws, '出席者一覧');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    // ファイル名（イベント名_出席者_YYYYMMDD.xlsx）
+    const safeName = (event['イベント名'] || 'event').replace(/[\\/:*?"<>|]/g, '_');
+    const dateStr = (event['日時'] || '').slice(0, 10).replace(/-/g, '');
+    const filename = `${safeName}_出席者${dateStr ? '_' + dateStr : ''}.xlsx`;
+    const encoded = encodeURIComponent(filename);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="export.xlsx"; filename*=UTF-8''${encoded}`
+    );
+    res.send(buffer);
+  } catch (err) {
+    console.error('Event export error:', err);
+    res.status(500).json({ error: err.message || 'エクスポートに失敗しました' });
   }
 });
 

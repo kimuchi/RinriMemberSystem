@@ -15,6 +15,49 @@ async function apiFetch(url, options = {}) {
   return data;
 }
 
+/**
+ * バイナリレスポンス（xlsx等）をダウンロードする
+ * Content-Disposition のファイル名を尊重する
+ */
+async function apiDownload(url, options = {}, fallbackName = 'download') {
+  const res = await fetch(`${API_BASE}${url}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    credentials: 'include',
+  });
+  if (res.status === 401) {
+    window.location.href = '/auth/login';
+    throw new Error('認証が必要です');
+  }
+  if (!res.ok) {
+    let msg = 'ダウンロードに失敗しました';
+    try { msg = (await res.json()).error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+
+  // Content-Disposition からファイル名を取り出す
+  let filename = fallbackName;
+  const disp = res.headers.get('Content-Disposition') || '';
+  const utf8Match = disp.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try { filename = decodeURIComponent(utf8Match[1]); } catch (e) {}
+  } else {
+    const plainMatch = disp.match(/filename="?([^";]+)"?/i);
+    if (plainMatch) filename = plainMatch[1];
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Cleanup after the click handler has had a chance to fire
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
 export const api = {
   // Auth
   getMe: () => apiFetch('/auth/me'),
@@ -48,6 +91,13 @@ export const api = {
   deleteAttendance: (eventId, attId) =>
     apiFetch(`/api/events/${eventId}/attendance/${attId}`, { method: 'DELETE' }),
   getEventTypes: () => apiFetch('/api/events/types'),
+  getExportFields: (eventId) => apiFetch(`/api/events/${eventId}/export-fields`),
+  exportEventAttendees: (eventId, columns) =>
+    apiDownload(
+      `/api/events/${eventId}/export`,
+      { method: 'POST', body: JSON.stringify({ columns }) },
+      'attendees.xlsx',
+    ),
 
   // Form Import
   getFormConfig: (eventId) => apiFetch(`/api/events/${eventId}/form`),

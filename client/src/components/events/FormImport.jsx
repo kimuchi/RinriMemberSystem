@@ -175,13 +175,18 @@ export default function FormImport({ eventId, onImported }) {
       const res = await api.previewFormImport(eventId);
       setPreview(res);
 
-      // デフォルトの差分解決: 名簿の値を維持
+      // デフォルトの差分解決:
+      //   - 名簿側が空の場合 → フォームの値を採用（あとから追加した列等を取り込むため）
+      //   - 名簿側に既存値あり → 名簿の値を維持
       const defaults = {};
       for (const entry of res.entries) {
         if (entry.diffs.length > 0 && entry.matched) {
           defaults[entry.formRow] = {};
           for (const diff of entry.diffs) {
-            defaults[entry.formRow][diff.field] = { value: diff.memberValue, source: 'member' };
+            const memberEmpty = !diff.memberValue || !String(diff.memberValue).trim();
+            defaults[entry.formRow][diff.field] = memberEmpty
+              ? { value: diff.formValue, source: 'form' }
+              : { value: diff.memberValue, source: 'member' };
           }
         }
       }

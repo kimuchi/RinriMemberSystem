@@ -10,6 +10,12 @@ const router = express.Router({ mergeParams: true });
 const FORM_CONFIG_SHEET = 'フォーム連携設定';
 const FORM_CONFIG_HEADERS = ['イベントID', 'スプレッドシートID', 'シート名', 'マッピング'];
 
+// 新規列名として禁止する名前（システム列との衝突防止）
+const MEMBER_SYSTEM_COLUMNS = new Set([
+  'ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
+]);
+
 /**
  * スプレッドシートURLまたはIDからスプレッドシートIDを抽出
  */
@@ -91,13 +97,33 @@ router.post('/connect', async (req, res) => {
 
 /**
  * PUT /form/mapping - フィールドマッピングを保存
+ * body: {
+ *   spreadsheetId, sheetName, mapping,
+ *   newColumns?: string[]  // 会員名簿に追加する新規列名
+ * }
  */
 router.put('/mapping', async (req, res) => {
   try {
     await ensureConfigSheet();
-    const { spreadsheetId, sheetName, mapping } = req.body;
+    const { spreadsheetId, sheetName, mapping, newColumns } = req.body;
     if (!spreadsheetId || !sheetName) {
       return res.status(400).json({ error: 'スプレッドシートIDとシート名は必須です' });
+    }
+
+    // 新規列を会員名簿に追加（マッピング保存より前に実行）
+    const addedColumns = [];
+    if (Array.isArray(newColumns) && newColumns.length > 0) {
+      const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
+      const existingSet = new Set(memberHeaders);
+      for (const raw of newColumns) {
+        const name = (raw || '').trim();
+        if (!name) continue;
+        if (MEMBER_SYSTEM_COLUMNS.has(name)) continue;
+        if (existingSet.has(name)) continue;
+        await sheets.addColumnToSheet('会員名簿', name);
+        existingSet.add(name);
+        addedColumns.push(name);
+      }
     }
 
     const mappingJson = JSON.stringify(mapping);
@@ -119,7 +145,7 @@ router.put('/mapping', async (req, res) => {
       });
     }
 
-    res.json({ success: true });
+    res.json({ success: true, addedColumns });
   } catch (err) {
     console.error('Save mapping error:', err);
     res.status(500).json({ error: 'マッピングの保存に失敗しました' });

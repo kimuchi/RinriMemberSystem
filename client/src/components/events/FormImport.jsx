@@ -120,10 +120,26 @@ export default function FormImport({ eventId, onImported }) {
       toast.warning('氏名に対応するフォーム列を選択してください');
       return;
     }
+    // 新規列（既存の会員フィールドに含まれない値）を抽出
+    const memberFieldsSet = new Set(connectResult?.memberFields || []);
+    const newColumns = Array.from(new Set(
+      Object.values(fieldMap)
+        .map(v => (v || '').trim())
+        .filter(v => v && !memberFieldsSet.has(v))
+    ));
+    // 名前未入力の新規列を検出
+    const hasBlankNewColumn = Object.entries(fieldMap).some(([fh, v]) => {
+      const trimmed = (v || '').trim();
+      return v && !trimmed; // 値はあるが trim 後に空（スペースのみ等）
+    });
+    if (hasBlankNewColumn) {
+      toast.warning('新規列名が未入力の項目があります');
+      return;
+    }
     setSaving(true);
     try {
       const skipArr = skipValues.split(',').map(s => s.trim()).filter(Boolean);
-      await api.saveFormMapping(eventId, {
+      const res = await api.saveFormMapping(eventId, {
         spreadsheetId: connectResult.spreadsheetId,
         sheetName: selectedSheet,
         mapping: {
@@ -132,8 +148,13 @@ export default function FormImport({ eventId, onImported }) {
           participationField: participationField || null,
           skipValues: skipArr.length > 0 ? skipArr : null,
         },
+        newColumns,
       });
-      toast.success('マッピングを保存しました');
+      if (res.addedColumns && res.addedColumns.length > 0) {
+        toast.success(`マッピングを保存しました（新規列${res.addedColumns.length}件を追加）`);
+      } else {
+        toast.success('マッピングを保存しました');
+      }
       await loadConfig();
     } catch (err) {
       toast.error(err.message);
@@ -398,21 +419,44 @@ export default function FormImport({ eventId, onImported }) {
         {/* フィールドマッピング */}
         <div className="form-group">
           <label className="form-label">フィールド対応（フォーム列 → 会員名簿の列）</label>
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-sm)' }}>
+            既存の列にない項目は「+ 新規列として追加」を選ぶと、保存時に会員名簿シートへ列が追加されます。
+          </p>
           <div className="mapping-table">
-            {formHeaders.filter(h => h !== nameField).map(fh => (
-              <div key={fh} className="mapping-row">
-                <span className="mapping-form-col">{fh}</span>
-                <Icon name="arrow_forward" size={16} style={{ color: 'var(--color-text-muted)' }} />
-                <select
-                  className="form-select mapping-member-col"
-                  value={fieldMap[fh] || ''}
-                  onChange={e => setFieldMap(prev => ({ ...prev, [fh]: e.target.value }))}
-                >
-                  <option value="">（スキップ）</option>
-                  {memberFields.map(mf => <option key={mf} value={mf}>{mf}</option>)}
-                </select>
-              </div>
-            ))}
+            {formHeaders.filter(h => h !== nameField).map(fh => {
+              const current = fieldMap[fh] || '';
+              const isNew = !!current && !memberFields.includes(current);
+              return (
+                <div key={fh} className="mapping-row">
+                  <span className="mapping-form-col">{fh}</span>
+                  <Icon name="arrow_forward" size={16} style={{ color: 'var(--color-text-muted)' }} />
+                  <select
+                    className="form-select mapping-member-col"
+                    value={isNew ? '__new__' : current}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v === '__new__') {
+                        setFieldMap(prev => ({ ...prev, [fh]: fh }));
+                      } else {
+                        setFieldMap(prev => ({ ...prev, [fh]: v }));
+                      }
+                    }}
+                  >
+                    <option value="">（スキップ）</option>
+                    {memberFields.map(mf => <option key={mf} value={mf}>{mf}</option>)}
+                    <option value="__new__">+ 新規列として追加...</option>
+                  </select>
+                  {isNew && (
+                    <input
+                      className="form-input mapping-new-col"
+                      value={current}
+                      onChange={e => setFieldMap(prev => ({ ...prev, [fh]: e.target.value }))}
+                      placeholder="新規列名"
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 

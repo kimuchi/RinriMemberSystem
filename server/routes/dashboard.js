@@ -2,6 +2,18 @@ const express = require('express');
 const sheets = require('../services/sheets');
 const router = express.Router();
 
+// 「見込み含む」にカウントする入会ステータス
+// 会員 + 動き中のプロスペクト（声がけ中・検討中は含まない）
+const PROSPECT_STATUSES = [
+  '新規登録済',
+  '複数口目として登録済',
+  '移籍予定',
+  '申込書受領済',
+  '申込予定',
+  'クロージング中',
+  '入会保留中',
+];
+
 router.get('/', async (req, res) => {
   try {
     const { data: members } = await sheets.getSheetData('会員名簿');
@@ -18,9 +30,9 @@ router.get('/', async (req, res) => {
       registeredStatuses.includes(m['入会ステータス'])
     ).length;
 
-    // 「検討中」を除いた人数を見込み含む人数とする
+    // 「見込み含む」は指定ステータスの合計
     const withProspects = members.filter(m =>
-      m['入会ステータス'] && m['入会ステータス'] !== '検討中'
+      PROSPECT_STATUSES.includes(m['入会ステータス'])
     ).length;
 
     // 「検討中」の人数

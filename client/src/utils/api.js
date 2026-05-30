@@ -145,4 +145,7 @@ export const api = {
 
   getGeneral: () => apiFetch('/api/settings/general'),
   updateGeneral: (data) => apiFetch('/api/settings/general', { method: 'PUT', body: JSON.stringify(data) }),
+
+  previewNormalizeNames: () => apiFetch('/api/settings/normalize-names/preview'),
+  normalizeNames: () => apiFetch('/api/settings/normalize-names', { method: 'POST' }),
 };

@@ -83,29 +83,163 @@ function GeneralSettings() {
   }
 
   return (
-    <div className="card">
-      <div className="card-header"><h2 className="settings-section-title">基本設定</h2></div>
-      <div className="card-body">
-        <div className="form-group">
-          <label className="form-label">単会名</label>
-          <input className="form-input" value={name} onChange={e => setName(e.target.value)} style={{ maxWidth: 400 }} />
-        </div>
-        {spreadsheetId && (
+    <>
+      <div className="card">
+        <div className="card-header"><h2 className="settings-section-title">基本設定</h2></div>
+        <div className="card-body">
           <div className="form-group">
-            <label className="form-label">スプレッドシート</label>
-            <a
-              href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-secondary btn-sm"
-            >
-              <Icon name="open_in_new" size={16} /> Googleスプレッドシートを開く
-            </a>
+            <label className="form-label">単会名</label>
+            <input className="form-input" value={name} onChange={e => setName(e.target.value)} style={{ maxWidth: 400 }} />
           </div>
+          {spreadsheetId && (
+            <div className="form-group">
+              <label className="form-label">スプレッドシート</label>
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary btn-sm"
+              >
+                <Icon name="open_in_new" size={16} /> Googleスプレッドシートを開く
+              </a>
+            </div>
+          )}
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? '保存中...' : '保存する'}
+          </button>
+        </div>
+      </div>
+
+      <NormalizeNamesCard />
+    </>
+  );
+}
+
+// ============ 氏名正規化 ============
+function NormalizeNamesCard() {
+  const { toast } = useApp();
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [executing, setExecuting] = useState(false);
+
+  async function handlePreview() {
+    setLoading(true);
+    try {
+      const res = await api.previewNormalizeNames();
+      setPreview(res);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleExecute() {
+    if (!preview) return;
+    const total = preview.memberChanges.length + preview.attendanceChanges.length;
+    if (total === 0) {
+      toast.success('正規化が必要な氏名はありません');
+      setPreview(null);
+      return;
+    }
+    if (!confirm(`${preview.memberChanges.length}件の会員名簿、${preview.attendanceChanges.length}件のイベント出席の氏名を正規化します。実行しますか？\n（処理に数十秒かかる場合があります）`)) return;
+    setExecuting(true);
+    try {
+      const res = await api.normalizeNames();
+      const parts = [];
+      if (res.memberNameChanged > 0) parts.push(`氏名 ${res.memberNameChanged}件`);
+      if (res.memberFuriganaChanged > 0) parts.push(`ふりがな ${res.memberFuriganaChanged}件`);
+      if (res.attendanceChanged > 0) parts.push(`出席記録 ${res.attendanceChanged}件`);
+      toast.success(parts.length > 0 ? parts.join('、') + 'を正規化しました' : '変更はありませんでした');
+      setPreview(null);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setExecuting(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
+      <div className="card-header"><h2 className="settings-section-title">データメンテナンス</h2></div>
+      <div className="card-body">
+        <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-xs)' }}>
+          氏名・ふりがなの正規化
+        </h3>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+          会員名簿の氏名・ふりがな、およびイベント出席の氏名から不要なスペース（全角・半角）を除去します。英語名のスペースは維持されます。
+        </p>
+
+        {!preview ? (
+          <button className="btn btn-secondary" onClick={handlePreview} disabled={loading}>
+            <Icon name="search" size={16} />
+            {loading ? '確認中...' : '正規化対象を確認'}
+          </button>
+        ) : (
+          <>
+            <div style={{ marginBottom: 'var(--space-md)', padding: 'var(--space-md)', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontSize: 'var(--font-size-sm)' }}>
+                <strong>会員名簿:</strong> {preview.memberChanges.length} / {preview.totalMembers} 件が変更されます
+              </div>
+              <div style={{ fontSize: 'var(--font-size-sm)', marginTop: 4 }}>
+                <strong>イベント出席:</strong> {preview.attendanceChanges.length} / {preview.totalAttendance} 件が変更されます
+              </div>
+            </div>
+
+            {preview.memberChanges.length > 0 && (
+              <div style={{ marginBottom: 'var(--space-md)' }}>
+                <h4 style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, marginBottom: 'var(--space-xs)', color: 'var(--color-text-secondary)' }}>
+                  会員名簿の変更内容
+                </h4>
+                <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
+                  <table className="data-table" style={{ fontSize: 'var(--font-size-xs)' }}>
+                    <thead>
+                      <tr><th>項目</th><th>変更前</th><th>変更後</th></tr>
+                    </thead>
+                    <tbody>
+                      {preview.memberChanges.flatMap(c => {
+                        const rows = [];
+                        if (c.name) rows.push(<tr key={`${c.id}-n`}><td>氏名</td><td>{c.name.from}</td><td><strong>{c.name.to}</strong></td></tr>);
+                        if (c.furigana) rows.push(<tr key={`${c.id}-f`}><td>ふりがな</td><td>{c.furigana.from}</td><td><strong>{c.furigana.to}</strong></td></tr>);
+                        return rows;
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {preview.attendanceChanges.length > 0 && (
+              <div style={{ marginBottom: 'var(--space-md)' }}>
+                <h4 style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, marginBottom: 'var(--space-xs)', color: 'var(--color-text-secondary)' }}>
+                  イベント出席の変更内容
+                </h4>
+                <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
+                  <table className="data-table" style={{ fontSize: 'var(--font-size-xs)' }}>
+                    <thead>
+                      <tr><th>変更前</th><th>変更後</th></tr>
+                    </thead>
+                    <tbody>
+                      {preview.attendanceChanges.map((c, i) => (
+                        <tr key={i}><td>{c.name.from}</td><td><strong>{c.name.to}</strong></td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+              <button className="btn btn-primary" onClick={handleExecute} disabled={executing}>
+                <Icon name="check" size={16} />
+                {executing ? '正規化中...' : '正規化を実行'}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setPreview(null)} disabled={executing}>
+                キャンセル
+              </button>
+            </div>
+          </>
         )}
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? '保存中...' : '保存する'}
-        </button>
       </div>
     </div>
   );

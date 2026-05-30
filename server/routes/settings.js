@@ -1,6 +1,7 @@
 const express = require('express');
 const sheets = require('../services/sheets');
 const { ownerOnly } = require('../middleware/auth');
+const { normalizeName, normalizeFurigana } = require('../utils/normalize');
 const router = express.Router();
 
 // ============ ユーザー管理 ============
@@ -275,6 +276,114 @@ router.put('/general', ownerOnly, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: '設定の更新に失敗しました' });
+  }
+});
+
+// ============ データメンテナンス ============
+
+/**
+ * GET /api/settings/normalize-names/preview - 正規化対象のプレビュー
+ * 変更が発生する氏名・ふりがなを列挙して返す（実行はしない）
+ */
+router.get('/normalize-names/preview', ownerOnly, async (req, res) => {
+  try {
+    const { data: members } = await sheets.getSheetData('会員名簿');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+
+    const memberChanges = [];
+    for (const m of members) {
+      const oldName = m['氏名'] || '';
+      const oldFuri = m['ふりがな'] || '';
+      const newName = normalizeName(oldName);
+      const newFuri = normalizeFurigana(oldFuri);
+      const nameChanged = oldName && newName !== oldName;
+      const furiChanged = oldFuri && newFuri !== oldFuri;
+      if (nameChanged || furiChanged) {
+        memberChanges.push({
+          id: m['ID'],
+          rowIndex: m._rowIndex,
+          name: nameChanged ? { from: oldName, to: newName } : null,
+          furigana: furiChanged ? { from: oldFuri, to: newFuri } : null,
+        });
+      }
+    }
+
+    const attendanceChanges = [];
+    for (const a of attendance) {
+      const oldName = a['氏名'] || '';
+      const newName = normalizeName(oldName);
+      if (oldName && newName !== oldName) {
+        attendanceChanges.push({
+          rowIndex: a._rowIndex,
+          eventId: a['イベントID'],
+          name: { from: oldName, to: newName },
+        });
+      }
+    }
+
+    res.json({
+      memberChanges,
+      attendanceChanges,
+      totalMembers: members.length,
+      totalAttendance: attendance.length,
+    });
+  } catch (err) {
+    console.error('Normalize names preview error:', err);
+    res.status(500).json({ error: '正規化プレビューの取得に失敗しました' });
+  }
+});
+
+/**
+ * POST /api/settings/normalize-names - 氏名・ふりがなの正規化を実行
+ * 会員名簿の氏名/ふりがな、およびイベント出席の氏名から不要なスペースを除去
+ */
+router.post('/normalize-names', ownerOnly, async (req, res) => {
+  try {
+    let memberNameChanged = 0;
+    let memberFuriganaChanged = 0;
+    let attendanceChanged = 0;
+
+    // 会員名簿: 氏名・ふりがな
+    const { data: members } = await sheets.getSheetData('会員名簿');
+    for (const m of members) {
+      const oldName = m['氏名'] || '';
+      const oldFuri = m['ふりがな'] || '';
+      const newName = normalizeName(oldName);
+      const newFuri = normalizeFurigana(oldFuri);
+      const nameChanged = oldName && newName !== oldName;
+      const furiChanged = oldFuri && newFuri !== oldFuri;
+      if (!nameChanged && !furiChanged) continue;
+
+      if (nameChanged) {
+        await sheets.updateCell('会員名簿', m._rowIndex, '氏名', newName);
+        memberNameChanged++;
+      }
+      if (furiChanged) {
+        await sheets.updateCell('会員名簿', m._rowIndex, 'ふりがな', newFuri);
+        memberFuriganaChanged++;
+      }
+    }
+
+    // イベント出席: 氏名
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    for (const a of attendance) {
+      const oldName = a['氏名'] || '';
+      const newName = normalizeName(oldName);
+      if (oldName && newName !== oldName) {
+        await sheets.updateCell('イベント出席', a._rowIndex, '氏名', newName);
+        attendanceChanged++;
+      }
+    }
+
+    res.json({
+      success: true,
+      memberNameChanged,
+      memberFuriganaChanged,
+      attendanceChanged,
+    });
+  } catch (err) {
+    console.error('Normalize names error:', err);
+    res.status(500).json({ error: '氏名の正規化に失敗しました' });
   }
 });
 

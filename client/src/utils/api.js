@@ -18,6 +18,7 @@ async function apiFetch(url, options = {}) {
 export const api = {
   // Auth
   getMe: () => apiFetch('/auth/me'),
+  getPublicInfo: () => apiFetch('/auth/public-info'),
   setup: (unitName) => apiFetch('/auth/setup', { method: 'POST', body: JSON.stringify({ unitName }) }),
 
   // Dashboard
@@ -40,11 +41,33 @@ export const api = {
   deleteEvent: (id) => apiFetch(`/api/events/${id}`, { method: 'DELETE' }),
   addAttendance: (eventId, data) =>
     apiFetch(`/api/events/${eventId}/attendance`, { method: 'POST', body: JSON.stringify(data) }),
+  addAttendanceBulk: (eventId, members, status) =>
+    apiFetch(`/api/events/${eventId}/attendance/bulk`, { method: 'POST', body: JSON.stringify({ members, status }) }),
   updateAttendance: (eventId, attId, data) =>
     apiFetch(`/api/events/${eventId}/attendance/${attId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAttendance: (eventId, attId) =>
     apiFetch(`/api/events/${eventId}/attendance/${attId}`, { method: 'DELETE' }),
   getEventTypes: () => apiFetch('/api/events/types'),
+
+  // Form Import
+  getFormConfig: (eventId) => apiFetch(`/api/events/${eventId}/form`),
+  connectForm: (eventId, spreadsheetId, sheetName) =>
+    apiFetch(`/api/events/${eventId}/form/connect`, { method: 'POST', body: JSON.stringify({ spreadsheetId, sheetName }) }),
+  saveFormMapping: (eventId, data) =>
+    apiFetch(`/api/events/${eventId}/form/mapping`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteFormLink: (eventId) =>
+    apiFetch(`/api/events/${eventId}/form`, { method: 'DELETE' }),
+  previewFormImport: (eventId) =>
+    apiFetch(`/api/events/${eventId}/form/preview`, { method: 'POST' }),
+  executeFormImport: (eventId, entries, newMembers) =>
+    apiFetch(`/api/events/${eventId}/form/execute`, { method: 'POST', body: JSON.stringify({ entries, newMembers }) }),
+
+  // CSV Import
+  getImportFields: () => apiFetch('/api/members/import/fields'),
+  previewCsvImport: (data) =>
+    apiFetch('/api/members/import/preview', { method: 'POST', body: JSON.stringify(data) }),
+  executeCsvImport: (updates, newMembers) =>
+    apiFetch('/api/members/import/execute', { method: 'POST', body: JSON.stringify({ updates, newMembers }) }),
 
   // Settings
   getUsers: () => apiFetch('/api/settings/users'),

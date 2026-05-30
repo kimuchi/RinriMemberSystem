@@ -5,11 +5,23 @@ const { generateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI || 'https://localhost:8080/auth/callback';
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || '').trim();
+const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+const REDIRECT_URI = (process.env.REDIRECT_URI || 'https://localhost:8080/auth/callback').trim();
 
 const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI);
+
+/**
+ * GET /auth/public-info - 認証不要の公開情報（単会名など）
+ */
+router.get('/public-info', async (req, res) => {
+  try {
+    const unitName = await sheets.getSetting('単会名');
+    res.json({ unitName: unitName || null });
+  } catch {
+    res.json({ unitName: null });
+  }
+});
 
 /**
  * GET /auth/login - Google OAuth開始
@@ -36,27 +48,39 @@ router.get('/callback', async (req, res) => {
       return res.redirect('/?error=no_code');
     }
 
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    // OAuth トークン取得時に専用クライアントを使う（共有インスタンスの競合を防ぐ）
+    const callbackClient = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI);
+    const { tokens } = await callbackClient.getToken(code);
+    callbackClient.setCredentials(tokens);
 
     // ユーザー情報を取得
     const { google } = require('googleapis');
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const oauth2 = google.oauth2({ version: 'v2', auth: callbackClient });
     const { data: userInfo } = await oauth2.userinfo.get();
 
     const email = userInfo.email;
     const name = userInfo.name || email;
     const picture = userInfo.picture || '';
+    console.log('Auth callback: user email =', email);
 
-    // ユーザーシートを確認
-    const { data: users } = await sheets.getSheetData('ユーザー');
+    // ユーザーシートを確認（シートが存在しない場合は初回セットアップへ）
+    let users = [];
+    try {
+      const result = await sheets.getSheetData('ユーザー');
+      users = result.data;
+    } catch (sheetErr) {
+      // シートが存在しない場合は空配列のまま（初回セットアップへ進む）
+      console.log('ユーザーシート未作成、初回セットアップを実行します:', sheetErr.message);
+    }
 
     let user = users.find(u => u['メールアドレス'] === email);
+    console.log('Auth callback: existing user =', !!user, ', total users =', users.length);
 
     if (!user) {
       // 初めてのユーザーの場合
       if (users.length === 0) {
         // 最初のユーザー → オーナーとして登録 + スプレッドシートセットアップ
+        console.log('Auth callback: first user setup starting');
         await sheets.setupSpreadsheet();
         // ユーザーシートデータを再取得（セットアップ後）
         const newId = sheets.generateId();
@@ -71,8 +95,10 @@ router.get('/callback', async (req, res) => {
         // スプレッドシートの共有権限を付与
         await sheets.shareWithUser(email, 'writer');
         user = { 'ロール': 'owner' };
+        console.log('Auth callback: first user setup complete');
       } else {
         // 既存システムに登録されていないユーザー → アクセス拒否
+        console.log('Auth callback: user not registered, access denied');
         return res.redirect('/?error=not_registered');
       }
     } else {
@@ -90,16 +116,21 @@ router.get('/callback', async (req, res) => {
     });
 
     // Cookieにセット
-    res.cookie('auth_token', token, {
+    const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+      path: '/',
+    };
+    console.log('Auth callback: setting cookie, secure =', cookieOptions.secure, ', protocol =', req.protocol, ', X-Forwarded-Proto =', req.get('X-Forwarded-Proto'));
+    res.set('Cache-Control', 'no-store');
+    res.cookie('auth_token', token, cookieOptions);
 
     res.redirect('/');
   } catch (err) {
-    console.error('Auth callback error:', err);
+    console.error('Auth callback error:', err.message);
+    console.error('Auth callback stack:', err.stack);
     res.redirect('/?error=auth_failed');
   }
 });
@@ -117,24 +148,30 @@ router.get('/me', async (req, res) => {
   }
 
   if (!token) {
+    console.log('/auth/me: no token found. cookies =', Object.keys(req.cookies || {}));
     return res.json({ user: null });
   }
 
   const { verifyToken } = require('../middleware/auth');
   const decoded = verifyToken(token);
   if (!decoded) {
+    console.log('/auth/me: token verification failed');
     return res.json({ user: null });
   }
 
   try {
+    console.log('/auth/me: token valid, email =', decoded.email);
     const { data } = await sheets.getSheetData('ユーザー');
+    console.log('/auth/me: ユーザーsheet rows =', data.length, ', emails =', data.map(u => u['メールアドレス']));
     const user = data.find(u => u['メールアドレス'] === decoded.email);
     if (!user) {
+      console.log('/auth/me: user not found in sheet for email =', decoded.email);
       return res.json({ user: null });
     }
 
     // 単会名を取得
     const unitName = await sheets.getSetting('単会名');
+    console.log('/auth/me: success, user =', decoded.email, ', unitName =', unitName);
 
     res.json({
       user: {
@@ -176,6 +213,25 @@ router.post('/setup', async (req, res) => {
     console.error('Setup error:', err);
     res.status(500).json({ error: 'セットアップに失敗しました' });
   }
+});
+
+/**
+ * GET /auth/debug - Cookie診断（本番デバッグ用、後で削除）
+ */
+router.get('/debug', (req, res) => {
+  const hasCookie = !!(req.cookies && req.cookies.auth_token);
+  const cookieHeader = req.headers.cookie || '(none)';
+  const proto = req.protocol;
+  const forwardedProto = req.get('X-Forwarded-Proto') || '(none)';
+  res.json({
+    hasCookie,
+    cookieNames: Object.keys(req.cookies || {}),
+    rawCookieHeader: cookieHeader.substring(0, 100),
+    protocol: proto,
+    forwardedProto,
+    secure: req.secure,
+    host: req.get('host'),
+  });
 });
 
 /**

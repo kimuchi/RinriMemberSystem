@@ -155,7 +155,18 @@ router.put('/custom-fields/:id', ownerOnly, async (req, res) => {
     const field = data.find(d => d['ID'] === req.params.id);
     if (!field) return res.status(404).json({ error: 'フィールドが見つかりません' });
 
-    if (req.body.name !== undefined) await sheets.updateCell('カスタムフィールド', field._rowIndex, 'フィールド名', req.body.name);
+    if (req.body.name !== undefined && req.body.name !== field['フィールド名']) {
+      const oldName = field['フィールド名'];
+      const newName = req.body.name;
+      // カスタムフィールド定義を更新
+      await sheets.updateCell('カスタムフィールド', field._rowIndex, 'フィールド名', newName);
+      // 会員名簿シートの列ヘッダーも更新
+      try {
+        await sheets.renameColumn('会員名簿', oldName, newName);
+      } catch (headerErr) {
+        console.error('Header rename error (non-fatal):', headerErr);
+      }
+    }
     if (req.body.order !== undefined) await sheets.updateCell('カスタムフィールド', field._rowIndex, '表示順', req.body.order);
     res.json({ success: true });
   } catch (err) {

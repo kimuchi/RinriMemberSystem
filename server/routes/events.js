@@ -1,6 +1,10 @@
 const express = require('express');
 const sheets = require('../services/sheets');
+const formImportRouter = require('./form-import');
 const router = express.Router();
+
+// フォーム連携サブルーター
+router.use('/:id/form', formImportRouter);
 
 /**
  * GET /api/events - イベント一覧
@@ -59,22 +63,29 @@ router.get('/:id', async (req, res) => {
     const { data: attendance } = await sheets.getSheetData('イベント出席');
     const { data: members } = await sheets.getSheetData('会員名簿');
 
+    // ふりがなマップを作成
+    const furiganaMap = {};
+    members.forEach(m => { furiganaMap[m['ID']] = m['ふりがな'] || ''; });
+
     const eventAttendance = attendance
       .filter(a => a['イベントID'] === req.params.id)
       .map(a => ({
         id: a['ID'],
         memberId: a['会員ID'],
         memberName: a['氏名'],
+        memberFurigana: furiganaMap[a['会員ID']] || '',
         status: a['出席状態'],
         notes: a['備考'],
         _rowIndex: a._rowIndex,
-      }));
+      }))
+      .sort((a, b) => (a.memberFurigana || '').localeCompare(b.memberFurigana || '', 'ja'));
 
-    // 未登録の会員一覧も返す
+    // 未登録の会員一覧も返す（五十音順）
     const attendedMemberIds = new Set(eventAttendance.map(a => a.memberId));
     const unregistered = members
       .filter(m => !attendedMemberIds.has(m['ID']))
-      .map(m => ({ id: m['ID'], name: m['氏名'] }));
+      .map(m => ({ id: m['ID'], name: m['氏名'], furigana: m['ふりがな'] || '' }))
+      .sort((a, b) => (a.furigana || '').localeCompare(b.furigana || '', 'ja'));
 
     res.json({
       event: {
@@ -183,12 +194,50 @@ router.post('/:id/attendance', async (req, res) => {
       'イベントID': req.params.id,
       '会員ID': memberId,
       '氏名': memberName,
-      '出席状態': status || '出席',
+      '出席状態': status || '事前登録',
       '備考': req.body.notes || '',
     });
     res.json({ success: true, id });
   } catch (err) {
     res.status(500).json({ error: '出席の登録に失敗しました' });
+  }
+});
+
+/**
+ * POST /api/events/:id/attendance/bulk - 一括出席登録
+ * body: { members: [{ id, name }], status: '未定' }
+ */
+router.post('/:id/attendance/bulk', async (req, res) => {
+  try {
+    const { members, status } = req.body;
+    if (!members || !Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ error: '会員が選択されていません' });
+    }
+
+    // 既に登録済みの会員をスキップ（二重登録防止）
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const alreadyRegistered = new Set(
+      attendance.filter(a => a['イベントID'] === req.params.id).map(a => a['会員ID'])
+    );
+    const newMembers = members.filter(m => !alreadyRegistered.has(m.id));
+
+    if (newMembers.length === 0) {
+      return res.json({ success: true, count: 0, skipped: members.length });
+    }
+
+    const rows = newMembers.map(m => ({
+      'ID': sheets.generateId(),
+      'イベントID': req.params.id,
+      '会員ID': m.id,
+      '氏名': m.name,
+      '出席状態': status || '事前登録',
+      '備考': '',
+    }));
+    await sheets.appendRows('イベント出席', rows);
+    res.json({ success: true, count: newMembers.length, skipped: members.length - newMembers.length });
+  } catch (err) {
+    console.error('Bulk attendance error:', err);
+    res.status(500).json({ error: '一括登録に失敗しました' });
   }
 });
 

@@ -10,6 +10,7 @@ env:
   GCP_REGION: asia-northeast1
   SERVICE_NAME: rinri-member-system
   ARTIFACT_REPO: docker-repo
+  SERVICE_ACCOUNT: rinri-system-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com
 
 jobs:
   deploy:
@@ -57,6 +58,7 @@ jobs:
             --min-instances 0 \
             --max-instances 3 \
             --timeout 60s \
+            --service-account ${{ env.SERVICE_ACCOUNT }} \
             --set-secrets=GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,SPREADSHEET_ID=SPREADSHEET_ID:latest,JWT_SECRET=JWT_SECRET:latest,REDIRECT_URI=REDIRECT_URI:latest
 
       - name: Show Service URL
@@ -66,4 +68,4 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --project ${{ env.GCP_PROJECT_ID }} \
             --format='value(status.url)')
-          echo "🚀 Deployed to: $URL"
+          echo "Deployed to: $URL"

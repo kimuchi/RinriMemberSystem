@@ -1,5 +1,6 @@
 const express = require('express');
 const sheets = require('../services/sheets');
+const { normalizeFurigana } = require('../utils/normalize');
 const router = express.Router();
 
 // 基本フィールドの定義（APIキー → シート列名）
@@ -15,10 +16,68 @@ const BASE_FIELDS = {
   notes: '備考',
 };
 
+// システム管理列（UIに表示しない）
+const SYSTEM_COLUMNS = new Set([
+  'ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
+]);
+
+/**
+ * スプレッドシートのヘッダーから追加列（自由文フィールド）を検出
+ * 基本列・システム列・カスタムフィールド列を除外
+ */
+function detectExtraFields(headers, customFieldNames) {
+  return headers.filter(h =>
+    !SYSTEM_COLUMNS.has(h) && !customFieldNames.includes(h)
+  );
+}
+
+/**
+ * スプレッドシートで直接追加された行のID・登録日・更新日を自動補完
+ * 空欄の場合のみ補完し、シートに書き戻す
+ * バッチ処理で1行ずつ順次更新（API rate limit対策）
+ */
+async function autoFillMembers(data) {
+  const now = new Date().toISOString();
+  const updates = [];
+
+  for (const m of data) {
+    const fills = {};
+    if (!m['ID']) {
+      fills['ID'] = sheets.generateId();
+      m['ID'] = fills['ID'];
+    }
+    if (!m['登録日']) {
+      fills['登録日'] = now;
+      m['登録日'] = fills['登録日'];
+    }
+    if (!m['更新日']) {
+      fills['更新日'] = now;
+      m['更新日'] = fills['更新日'];
+    }
+    if (Object.keys(fills).length > 0) {
+      updates.push({ rowIndex: m._rowIndex, member: m });
+    }
+  }
+
+  // ID・登録日・更新日のみを個別セル更新（行全体を上書きしない安全な方法）
+  for (const { rowIndex, member } of updates) {
+    try {
+      if (member['ID']) await sheets.updateCell('会員名簿', rowIndex, 'ID', member['ID']);
+      if (member['登録日']) await sheets.updateCell('会員名簿', rowIndex, '登録日', member['登録日']);
+      if (member['更新日']) await sheets.updateCell('会員名簿', rowIndex, '更新日', member['更新日']);
+    } catch (err) {
+      console.error('Auto-fill write-back error:', err);
+    }
+  }
+
+  return data;
+}
+
 /**
  * 会員データをAPIレスポンス形式に変換（カスタムフィールド含む）
  */
-function formatMember(m, customFields) {
+function formatMember(m, customFields, extraFields) {
   const result = {
     id: m['ID'],
     name: m['氏名'],
@@ -34,23 +93,74 @@ function formatMember(m, customFields) {
     updatedAt: m['更新日'],
     _rowIndex: m._rowIndex,
     customFields: {},
+    extraFields: {},
   };
-  // カスタムフィールドの値をマッピング
+  // カスタムフィールド（ドロップダウン）の値
   customFields.forEach(cf => {
     result.customFields[cf.id] = m[cf.name] || '';
+  });
+  // 追加列（自由文テキスト）の値
+  extraFields.forEach(col => {
+    result.extraFields[col] = m[col] || '';
   });
   return result;
 }
 
 /**
  * GET /api/members - 会員一覧
+ * 各会員の直近イベント参加情報を付与
  */
 router.get('/', async (req, res) => {
   try {
-    const { data } = await sheets.getSheetData('会員名簿');
+    const { headers, data } = await sheets.getSheetData('会員名簿');
+    await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
-    const members = data.map(m => formatMember(m, customFields));
-    res.json({ members, customFields });
+    const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
+
+    // イベント参加情報を取得
+    const { data: events } = await sheets.getSheetData('イベント');
+    const { data: attendanceData } = await sheets.getSheetData('イベント出席');
+
+    // イベントIDから情報を引けるようにする
+    const eventMap = {};
+    events.forEach(e => { eventMap[e['ID']] = e; });
+
+    // イベント一覧（日付降順）
+    const eventList = events
+      .map(e => ({
+        id: e['ID'],
+        name: e['イベント名'],
+        type: e['種類'] || '',
+        date: e['日時'] || '',
+      }))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // 会員ID → 全参加イベント一覧（日付降順）
+    const memberEvents = {};
+    attendanceData.forEach(a => {
+      const mid = a['会員ID'];
+      if (!mid) return;
+      if (!memberEvents[mid]) memberEvents[mid] = [];
+      const ev = eventMap[a['イベントID']];
+      memberEvents[mid].push({
+        eventId: a['イベントID'],
+        eventName: ev ? ev['イベント名'] : '',
+        eventDate: ev ? ev['日時'] : '',
+        eventType: ev ? ev['種類'] : '',
+        status: a['出席状態'],
+      });
+    });
+    for (const mid of Object.keys(memberEvents)) {
+      memberEvents[mid].sort((a, b) => (b.eventDate || '').localeCompare(a.eventDate || ''));
+    }
+
+    const members = data.map(m => {
+      const fm = formatMember(m, customFields, extraFields);
+      fm.allEvents = memberEvents[m['ID']] || [];
+      fm.recentEvents = (memberEvents[m['ID']] || []).slice(0, 3);
+      return fm;
+    });
+    res.json({ members, customFields, extraFields, eventList });
   } catch (err) {
     console.error('Get members error:', err);
     res.status(500).json({ error: '会員一覧の取得に失敗しました' });
@@ -59,14 +169,45 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/members/:id - 会員詳細
+ * イベント参加履歴を全件付与
  */
 router.get('/:id', async (req, res) => {
   try {
-    const { data } = await sheets.getSheetData('会員名簿');
+    const { headers, data } = await sheets.getSheetData('会員名簿');
+    await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
+    const extraFields = detectExtraFields(headers, customFields.map(cf => cf.name));
     const member = data.find(m => m['ID'] === req.params.id);
     if (!member) return res.status(404).json({ error: '会員が見つかりません' });
-    res.json({ member: formatMember(member, customFields), customFields });
+
+    // イベント参加履歴
+    const { data: events } = await sheets.getSheetData('イベント');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const eventMap = {};
+    events.forEach(e => { eventMap[e['ID']] = e; });
+
+    const memberAttendance = attendance
+      .filter(a => a['会員ID'] === req.params.id)
+      .map(a => {
+        const ev = eventMap[a['イベントID']];
+        return {
+          attendanceId: a['ID'],
+          eventId: a['イベントID'],
+          eventName: ev ? ev['イベント名'] : '',
+          eventDate: ev ? ev['日時'] : '',
+          eventType: ev ? ev['種類'] : '',
+          status: a['出席状態'],
+          notes: a['備考'],
+        };
+      })
+      .sort((a, b) => (b.eventDate || '').localeCompare(a.eventDate || ''));
+
+    res.json({
+      member: formatMember(member, customFields, extraFields),
+      customFields,
+      extraFields,
+      eventHistory: memberAttendance,
+    });
   } catch (err) {
     console.error('Get member error:', err);
     res.status(500).json({ error: '会員情報の取得に失敗しました' });
@@ -88,14 +229,26 @@ router.post('/', async (req, res) => {
 
     // 基本フィールド
     Object.entries(BASE_FIELDS).forEach(([apiKey, sheetCol]) => {
-      rowData[sheetCol] = req.body[apiKey] || '';
+      let val = req.body[apiKey] || '';
+      // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
+      if (apiKey === 'furigana') val = normalizeFurigana(val);
+      rowData[sheetCol] = val;
     });
 
-    // カスタムフィールド
+    // カスタムフィールド（ドロップダウン）
     const customFields = await sheets.getCustomFields();
     if (req.body.customFields) {
       customFields.forEach(cf => {
         rowData[cf.name] = req.body.customFields[cf.id] || '';
+      });
+    }
+
+    // 追加列（自由文テキスト）
+    if (req.body.extraFields) {
+      Object.entries(req.body.extraFields).forEach(([col, val]) => {
+        if (!SYSTEM_COLUMNS.has(col)) {
+          rowData[col] = val || '';
+        }
       });
     }
 
@@ -122,16 +275,28 @@ router.put('/:id', async (req, res) => {
     // 基本フィールド
     Object.entries(BASE_FIELDS).forEach(([apiKey, sheetCol]) => {
       if (req.body[apiKey] !== undefined) {
-        updatedData[sheetCol] = req.body[apiKey];
+        let val = req.body[apiKey];
+        // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
+        if (apiKey === 'furigana') val = normalizeFurigana(val);
+        updatedData[sheetCol] = val;
       }
     });
 
-    // カスタムフィールド
+    // カスタムフィールド（ドロップダウン）
     const customFields = await sheets.getCustomFields();
     if (req.body.customFields) {
       customFields.forEach(cf => {
         if (req.body.customFields[cf.id] !== undefined) {
           updatedData[cf.name] = req.body.customFields[cf.id];
+        }
+      });
+    }
+
+    // 追加列（自由文テキスト）
+    if (req.body.extraFields) {
+      Object.entries(req.body.extraFields).forEach(([col, val]) => {
+        if (!SYSTEM_COLUMNS.has(col) && val !== undefined) {
+          updatedData[col] = val;
         }
       });
     }
@@ -162,8 +327,9 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ error: '無効なフィールドです' });
     }
 
-    await sheets.updateCell('会員名簿', member._rowIndex, field, value);
-    await sheets.updateCell('会員名簿', member._rowIndex, '更新日', new Date().toISOString());
+    // Update field and timestamp in one row update (saves API calls)
+    const updatedData = { ...member, [field]: value, '更新日': new Date().toISOString() };
+    await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
     res.json({ success: true });
   } catch (err) {
     console.error('Update status error:', err);

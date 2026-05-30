@@ -10,6 +10,9 @@ class SheetsService {
     this.sheets = null;
     this.drive = null;
     this.spreadsheetId = process.env.SPREADSHEET_ID;
+    // In-memory cache: { sheetName: { data, timestamp } }
+    this._cache = {};
+    this._cacheTTL = 30 * 1000; // 30 seconds
   }
 
   async init() {
@@ -27,14 +30,43 @@ class SheetsService {
 
   // ============ Core Sheet Operations ============
 
+  _getCached(sheetName) {
+    const entry = this._cache[sheetName];
+    if (entry && (Date.now() - entry.timestamp) < this._cacheTTL) {
+      return entry.data;
+    }
+    return null;
+  }
+
+  _setCache(sheetName, data) {
+    this._cache[sheetName] = { data, timestamp: Date.now() };
+  }
+
+  invalidateCache(sheetName) {
+    if (sheetName) {
+      delete this._cache[sheetName];
+    } else {
+      this._cache = {};
+    }
+  }
+
   async getSheetData(sheetName) {
     await this.init();
+
+    // Check cache first
+    const cached = this._getCached(sheetName);
+    if (cached) return cached;
+
     const res = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
       range: `${sheetName}!A:ZZ`,
     });
     const rows = res.data.values || [];
-    if (rows.length === 0) return { headers: [], data: [], headerMap: {} };
+    if (rows.length === 0) {
+      const result = { headers: [], data: [], headerMap: {} };
+      this._setCache(sheetName, result);
+      return result;
+    }
 
     const headers = rows[0];
     const headerMap = {};
@@ -48,21 +80,52 @@ class SheetsService {
       return obj;
     });
 
-    return { headers, data, headerMap };
+    const result = { headers, data, headerMap };
+    this._setCache(sheetName, result);
+    return result;
+  }
+
+  /**
+   * Get only headers (uses cache, avoids full data parse if only headers needed)
+   */
+  async getHeaders(sheetName) {
+    const { headers, headerMap } = await this.getSheetData(sheetName);
+    return { headers, headerMap };
+  }
+
+  /**
+   * シートの実際の行数をAPIから直接取得（キャッシュ不使用）
+   */
+  async _getActualRowCount(sheetName) {
+    const res = await this.sheets.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${sheetName}!A:A`,
+    });
+    return (res.data.values || []).length;
   }
 
   async appendRow(sheetName, rowData) {
+    await this.appendRows(sheetName, [rowData]);
+  }
+
+  async appendRows(sheetName, rowDataArray) {
+    if (!rowDataArray || rowDataArray.length === 0) return;
     await this.init();
     const { headers } = await this.getSheetData(sheetName);
-    const row = headers.map(h => rowData[h] || '');
+    const rows = rowDataArray.map(rowData => headers.map(h => rowData[h] || ''));
 
-    await this.sheets.spreadsheets.values.append({
+    // キャッシュではなくAPIから直接最終行を取得
+    const actualRows = await this._getActualRowCount(sheetName);
+    const startRow = actualRows + 1;
+    console.log(`appendRows(${sheetName}): ${rows.length} rows at row ${startRow}`);
+
+    await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.spreadsheetId,
-      range: `${sheetName}!A:A`,
+      range: `${sheetName}!A${startRow}`,
       valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [row] },
+      requestBody: { values: rows },
     });
+    this.invalidateCache(sheetName);
   }
 
   async updateRow(sheetName, rowNumber, rowData) {
@@ -78,6 +141,7 @@ class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     });
+    this.invalidateCache(sheetName);
   }
 
   async deleteRow(sheetName, rowNumber) {
@@ -105,6 +169,7 @@ class SheetsService {
         }],
       },
     });
+    this.invalidateCache(sheetName);
   }
 
   async updateCell(sheetName, rowNumber, columnName, value) {
@@ -120,6 +185,7 @@ class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[value]] },
     });
+    this.invalidateCache(sheetName);
   }
 
   // ============ Column Management ============
@@ -136,6 +202,24 @@ class SheetsService {
       valueInputOption: 'RAW',
       requestBody: { values: [[columnName]] },
     });
+    this.invalidateCache(sheetName);
+  }
+
+  async renameColumn(sheetName, oldName, newName) {
+    await this.init();
+    const { headerMap } = await this.getSheetData(sheetName);
+    const colIndex = headerMap[oldName];
+    if (colIndex === undefined) return false;
+
+    const colLetter = this.colToLetter(colIndex);
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.spreadsheetId,
+      range: `${sheetName}!${colLetter}1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[newName]] },
+    });
+    this.invalidateCache(sheetName);
+    return true;
   }
 
   // ============ Custom Fields ============
@@ -174,8 +258,8 @@ class SheetsService {
     const sheetConfigs = [
       {
         name: '会員名簿',
-        headers: ['ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
-          '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日'],
+        headers: ['ID', '登録日', '更新日', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+          '会社名', '住所', '会社電話番号', '入会ステータス', '備考'],
       },
       {
         name: 'イベント',
@@ -224,6 +308,10 @@ class SheetsService {
             requests: [{ addSheet: { properties: { title: config.name } } }],
           },
         });
+      }
+      // ヘッダーが存在しない場合は書き込む（シートが既存でも空の場合に対応）
+      const { headers: existingHeaders } = await this.getSheetData(config.name);
+      if (existingHeaders.length === 0) {
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
           range: `${config.name}!A1`,
@@ -262,6 +350,99 @@ class SheetsService {
     }
 
     return true;
+  }
+
+  // ============ External Spreadsheet Access ============
+
+  /**
+   * 外部スプレッドシートのシート名一覧を取得
+   */
+  async getExternalSheetNames(spreadsheetId) {
+    await this.init();
+    try {
+      const res = await this.sheets.spreadsheets.get({ spreadsheetId });
+      return res.data.sheets.map(s => s.properties.title);
+    } catch (err) {
+      if (err.code === 403 || err.code === 404) {
+        const email = await this.getServiceAccountEmail();
+        throw new Error(
+          `スプレッドシートにアクセスできません。以下のサービスアカウントにスプレッドシートの共有（閲覧者以上）を設定してください: ${email}`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 外部スプレッドシートのデータを取得
+   */
+  async getExternalSheetData(spreadsheetId, sheetName) {
+    await this.init();
+    try {
+      const res = await this.sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:ZZ`,
+      });
+      const rows = res.data.values || [];
+      if (rows.length === 0) return { headers: [], data: [] };
+
+      const headers = rows[0];
+      const data = rows.slice(1).map((row, i) => {
+        const obj = { _rowIndex: i + 2 };
+        headers.forEach((h, j) => { obj[h] = row[j] || ''; });
+        return obj;
+      });
+      return { headers, data };
+    } catch (err) {
+      if (err.code === 403 || err.code === 404) {
+        const email = await this.getServiceAccountEmail();
+        throw new Error(
+          `スプレッドシートにアクセスできません。以下のサービスアカウントにスプレッドシートの共有（閲覧者以上）を設定してください: ${email}`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * サービスアカウントのメールアドレスを取得
+   */
+  async getServiceAccountEmail() {
+    await this.init();
+    const auth = new google.auth.GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const client = await auth.getClient();
+    return client.email || '(不明 - 環境変数を確認してください)';
+  }
+
+  /**
+   * シートが存在しなければ作成する
+   */
+  async ensureSheet(sheetName, headers) {
+    await this.init();
+    const spreadsheet = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+    });
+    const exists = spreadsheet.data.sheets.some(s => s.properties.title === sheetName);
+    if (!exists) {
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: sheetName } } }],
+        },
+      });
+    }
+    const { headers: existing } = await this.getSheetData(sheetName);
+    if (existing.length === 0) {
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+      this.invalidateCache(sheetName);
+    }
   }
 
   // ============ Drive Permissions ============

@@ -14,13 +14,16 @@ export default function MemberDetail() {
   const [form, setForm] = useState({
     name: '', furigana: '', email: '', phone: '',
     company: '', address: '', companyPhone: '',
-    memberStatus: '', notes: '', customFields: {},
+    memberStatus: '', notes: '', customFields: {}, extraFields: {},
   });
   const [statuses, setStatuses] = useState([]);
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [cfOptionsMap, setCfOptionsMap] = useState({});
+  const [extraFieldNames, setExtraFieldNames] = useState([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  const [eventHistory, setEventHistory] = useState([]);
+  const [showAllEvents, setShowAllEvents] = useState(false);
 
   useEffect(() => { loadData(); }, [id]);
 
@@ -41,6 +44,8 @@ export default function MemberDetail() {
       if (!isNew) {
         const res = await api.getMember(id);
         const m = res.member;
+        setExtraFieldNames(res.extraFields || []);
+        setEventHistory(res.eventHistory || []);
         setForm({
           name: m.name || '',
           furigana: m.furigana || '',
@@ -52,7 +57,12 @@ export default function MemberDetail() {
           memberStatus: m.memberStatus || '',
           notes: m.notes || '',
           customFields: m.customFields || {},
+          extraFields: m.extraFields || {},
         });
+      } else {
+        // 新規の場合も追加列名を取得
+        const memberRes = await api.getMembers();
+        setExtraFieldNames(memberRes.extraFields || []);
       }
     } catch (err) {
       toast.error('データの取得に失敗しました');
@@ -69,6 +79,13 @@ export default function MemberDetail() {
     setForm(prev => ({
       ...prev,
       customFields: { ...prev.customFields, [fieldId]: value },
+    }));
+  }
+
+  function handleExtraChange(colName, value) {
+    setForm(prev => ({
+      ...prev,
+      extraFields: { ...prev.extraFields, [colName]: value },
     }));
   }
 
@@ -104,6 +121,20 @@ export default function MemberDetail() {
       toast.error(err.message);
     }
   }
+
+  async function handleEventStatusChange(eventId, attId, status) {
+    try {
+      await api.updateAttendance(eventId, attId, { status });
+      setEventHistory(prev => prev.map(e =>
+        e.attendanceId === attId ? { ...e, status } : e
+      ));
+    } catch (err) {
+      toast.error('更新に失敗しました');
+    }
+  }
+
+  const VISIBLE_EVENTS = 5;
+  const visibleEvents = showAllEvents ? eventHistory : eventHistory.slice(0, VISIBLE_EVENTS);
 
   if (loading) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
@@ -163,7 +194,7 @@ export default function MemberDetail() {
               </select>
             </div>
 
-            {/* カスタムフィールド */}
+            {/* カスタムフィールド（ドロップダウン） */}
             {customFieldDefs.map(cf => (
               <div className="form-group" key={cf.id}>
                 <label className="form-label">{cf.name}</label>
@@ -175,6 +206,18 @@ export default function MemberDetail() {
                   <option value="">-- 選択してください --</option>
                   {(cfOptionsMap[cf.id] || []).map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
+              </div>
+            ))}
+
+            {/* 追加列（自由文テキスト） */}
+            {extraFieldNames.map(col => (
+              <div className="form-group" key={col}>
+                <label className="form-label">{col}</label>
+                <input
+                  className="form-input"
+                  value={form.extraFields[col] || ''}
+                  onChange={e => handleExtraChange(col, e.target.value)}
+                />
               </div>
             ))}
 
@@ -200,6 +243,62 @@ export default function MemberDetail() {
           </div>
         </div>
       </div>
+
+      {/* イベント参加履歴 */}
+      {!isNew && (
+        <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
+          <div className="card-header">
+            <h2 style={{ fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
+              <Icon name="event" size={18} /> イベント参加履歴（{eventHistory.length}件）
+            </h2>
+          </div>
+          <div className="card-body">
+            {eventHistory.length === 0 ? (
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>参加履歴がありません</p>
+            ) : (
+              <>
+                <ul className="event-history-list">
+                  {visibleEvents.map(ev => (
+                    <li key={ev.attendanceId} className="event-history-item">
+                      <span className={`status-dot ${ev.status === '出席' ? 'dot-success' : ev.status === '事前登録' ? 'dot-info' : ev.status === '欠席' ? 'dot-danger' : 'dot-muted'}`} />
+                      <span className="event-history-name" onClick={() => navigate(`/events/${ev.eventId}`)}>
+                        {ev.eventName}
+                      </span>
+                      {ev.eventType && <span className="badge badge-primary event-history-type">{ev.eventType}</span>}
+                      <span className="event-history-date">{ev.eventDate || '日時未定'}</span>
+                      <select
+                        className="inline-select"
+                        value={ev.status}
+                        onChange={e => handleEventStatusChange(ev.eventId, ev.attendanceId, e.target.value)}
+                        style={ev.status === '出席' ? { color: 'var(--color-success)', background: 'var(--color-success-bg)' }
+                          : ev.status === '欠席' ? { color: 'var(--color-danger)', background: 'var(--color-danger-bg)' }
+                          : ev.status === '事前登録' ? { color: 'var(--color-primary)', background: 'var(--color-primary-bg, #eff6ff)' }
+                          : {}}
+                      >
+                        <option value="事前登録">事前登録</option>
+                        <option value="出席">出席</option>
+                        <option value="欠席">欠席</option>
+                        <option value="遅刻">遅刻</option>
+                        <option value="未定">未定</option>
+                      </select>
+                      {ev.notes && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{ev.notes}</span>}
+                    </li>
+                  ))}
+                </ul>
+                {eventHistory.length > VISIBLE_EVENTS && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginTop: 'var(--space-sm)' }}
+                    onClick={() => setShowAllEvents(!showAllEvents)}
+                  >
+                    {showAllEvents ? '折りたたむ' : `すべて表示（${eventHistory.length}件）`}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

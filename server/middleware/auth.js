@@ -4,6 +4,21 @@ const sheets = require('../services/sheets');
 const JWT_SECRET = process.env.JWT_SECRET || 'rinri-member-system-secret-key-change-in-production';
 const TOKEN_EXPIRY = '7d';
 
+// Cache user list to avoid reading sheet on every request
+let _userCache = null;
+let _userCacheTime = 0;
+const USER_CACHE_TTL = 60 * 1000; // 60 seconds
+
+async function getCachedUsers() {
+  if (_userCache && (Date.now() - _userCacheTime) < USER_CACHE_TTL) {
+    return _userCache;
+  }
+  const { data } = await sheets.getSheetData('ユーザー');
+  _userCache = data;
+  _userCacheTime = Date.now();
+  return data;
+}
+
 function generateToken(user) {
   return jwt.sign(
     { email: user.email, name: user.name, picture: user.picture, role: user.role },
@@ -39,9 +54,9 @@ async function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'トークンが無効です' });
   }
 
-  // Verify user exists in system
+  // Verify user exists in system (cached)
   try {
-    const { data } = await sheets.getSheetData('ユーザー');
+    const data = await getCachedUsers();
     const user = data.find(u => u['メールアドレス'] === decoded.email);
     if (!user) {
       return res.status(403).json({ error: 'このシステムへのアクセス権がありません' });

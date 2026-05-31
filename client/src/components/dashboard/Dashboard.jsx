@@ -33,7 +33,7 @@ export default function Dashboard() {
     return <div className="empty-state"><Icon name="error_outline" /><p>データの取得に失敗しました</p></div>;
   }
 
-  const { counts, statusBreakdown, recentEvents, typeStats } = data;
+  const { cards = [], counts = {}, statusBreakdown, recentEvents, typeStats } = data;
 
   return (
     <div className="dashboard">
@@ -43,28 +43,17 @@ export default function Dashboard() {
       </div>
 
       {/* Stat Cards */}
-      <div className="stat-grid">
-        <div className="stat-card stat-primary">
-          <div className="stat-icon"><Icon name="how_to_reg" size={28} /></div>
-          <div className="stat-value">{counts.registered}</div>
-          <div className="stat-label">登録済み会員</div>
+      {cards.length > 0 && (
+        <div className="stat-grid">
+          {cards.map(card => (
+            <div key={card.id} className={`stat-card stat-${card.color || 'muted'}`}>
+              <div className="stat-icon"><Icon name={card.icon || 'group'} size={28} /></div>
+              <div className="stat-value">{card.count}</div>
+              <div className="stat-label">{card.label}</div>
+            </div>
+          ))}
         </div>
-        <div className="stat-card stat-info">
-          <div className="stat-icon"><Icon name="group_add" size={28} /></div>
-          <div className="stat-value">{counts.withProspects}</div>
-          <div className="stat-label">見込み含む</div>
-        </div>
-        <div className="stat-card stat-warning">
-          <div className="stat-icon"><Icon name="connect_without_contact" size={28} /></div>
-          <div className="stat-value">{counts.contacting}</div>
-          <div className="stat-label">お声がけ中</div>
-        </div>
-        <div className="stat-card stat-muted">
-          <div className="stat-icon"><Icon name="groups" size={28} /></div>
-          <div className="stat-value">{counts.total}</div>
-          <div className="stat-label">名簿総数</div>
-        </div>
-      </div>
+      )}
 
       <div className="dashboard-grid">
         {/* Status Breakdown */}

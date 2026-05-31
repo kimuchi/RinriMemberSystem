@@ -28,7 +28,9 @@
 }
 .stat-primary::after { background: var(--color-primary); }
 .stat-info::after    { background: var(--color-info); }
+.stat-success::after { background: var(--color-success); }
 .stat-warning::after { background: var(--color-warning); }
+.stat-danger::after  { background: var(--color-danger); }
 .stat-muted::after   { background: var(--color-text-muted); }
 
 .stat-icon {

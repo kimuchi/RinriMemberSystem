@@ -148,4 +148,9 @@ export const api = {
 
   previewNormalizeNames: () => apiFetch('/api/settings/normalize-names/preview'),
   normalizeNames: () => apiFetch('/api/settings/normalize-names', { method: 'POST' }),
+
+  getDashboardCards: () => apiFetch('/api/settings/dashboard-cards'),
+  addDashboardCard: (data) => apiFetch('/api/settings/dashboard-cards', { method: 'POST', body: JSON.stringify(data) }),
+  updateDashboardCard: (id, data) => apiFetch(`/api/settings/dashboard-cards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteDashboardCard: (id) => apiFetch(`/api/settings/dashboard-cards/${id}`, { method: 'DELETE' }),
 };

@@ -259,6 +259,87 @@ router.delete('/event-types/:rowIndex', ownerOnly, async (req, res) => {
   }
 });
 
+// ============ ダッシュボードカード ============
+
+const VALID_COLORS = ['primary', 'info', 'success', 'warning', 'danger', 'muted'];
+
+function sanitizeStatuses(input) {
+  if (Array.isArray(input)) {
+    return input.map(s => String(s).trim()).filter(Boolean).join(',');
+  }
+  return String(input || '').split(',').map(s => s.trim()).filter(Boolean).join(',');
+}
+
+router.get('/dashboard-cards', async (req, res) => {
+  try {
+    const cards = await sheets.getDashboardCards();
+    res.json({ cards });
+  } catch (err) {
+    res.status(500).json({ error: 'ダッシュボードカードの取得に失敗しました' });
+  }
+});
+
+router.post('/dashboard-cards', ownerOnly, async (req, res) => {
+  try {
+    await sheets.getDashboardCards(); // ensures sheet exists
+    const { label, icon, color, statuses, order } = req.body;
+    if (!label) return res.status(400).json({ error: '表示名は必須です' });
+    const id = sheets.generateId();
+    const finalColor = VALID_COLORS.includes(color) ? color : 'muted';
+    await sheets.appendRow('ダッシュボードカード', {
+      'ID': id,
+      '表示名': label,
+      'アイコン': icon || 'group',
+      '色': finalColor,
+      '集計ステータス': sanitizeStatuses(statuses),
+      '表示順': String(order || 99),
+      '有効': 'true',
+    });
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error('Add dashboard card error:', err);
+    res.status(500).json({ error: 'ダッシュボードカードの追加に失敗しました' });
+  }
+});
+
+router.put('/dashboard-cards/:id', ownerOnly, async (req, res) => {
+  try {
+    const { data } = await sheets.getSheetData('ダッシュボードカード');
+    const card = data.find(d => d['ID'] === req.params.id);
+    if (!card) return res.status(404).json({ error: 'カードが見つかりません' });
+
+    const updates = {};
+    if (req.body.label !== undefined) updates['表示名'] = req.body.label;
+    if (req.body.icon !== undefined) updates['アイコン'] = req.body.icon || 'group';
+    if (req.body.color !== undefined) {
+      updates['色'] = VALID_COLORS.includes(req.body.color) ? req.body.color : 'muted';
+    }
+    if (req.body.statuses !== undefined) updates['集計ステータス'] = sanitizeStatuses(req.body.statuses);
+    if (req.body.order !== undefined) updates['表示順'] = String(req.body.order);
+    if (req.body.enabled !== undefined) updates['有効'] = req.body.enabled ? 'true' : 'false';
+
+    for (const [field, value] of Object.entries(updates)) {
+      await sheets.updateCell('ダッシュボードカード', card._rowIndex, field, value);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update dashboard card error:', err);
+    res.status(500).json({ error: 'ダッシュボードカードの更新に失敗しました' });
+  }
+});
+
+router.delete('/dashboard-cards/:id', ownerOnly, async (req, res) => {
+  try {
+    const { data } = await sheets.getSheetData('ダッシュボードカード');
+    const card = data.find(d => d['ID'] === req.params.id);
+    if (!card) return res.status(404).json({ error: 'カードが見つかりません' });
+    await sheets.deleteRow('ダッシュボードカード', card._rowIndex);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'ダッシュボードカードの削除に失敗しました' });
+  }
+});
+
 // ============ 一般設定 ============
 
 router.get('/general', async (req, res) => {

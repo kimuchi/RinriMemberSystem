@@ -38,6 +38,42 @@
   font-weight: 600;
 }
 
+/* Dashboard card editor */
+.dashboard-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-light);
+}
+.dashboard-card-edit {
+  padding: var(--space-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-primary);
+}
+.form-row {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+.form-row .form-group { min-width: 150px; }
+
+.stat-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.stat-color-dot.stat-primary { background: var(--color-primary); }
+.stat-color-dot.stat-info    { background: var(--color-info); }
+.stat-color-dot.stat-success { background: var(--color-success); }
+.stat-color-dot.stat-warning { background: var(--color-warning); }
+.stat-color-dot.stat-danger  { background: var(--color-danger); }
+.stat-color-dot.stat-muted   { background: var(--color-text-muted); }
+
 .settings-help {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);

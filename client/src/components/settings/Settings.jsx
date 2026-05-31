@@ -19,6 +19,7 @@ export default function Settings() {
 
   const tabs = [
     { key: 'general', label: '基本設定', icon: 'tune' },
+    { key: 'dashboard', label: 'ダッシュボード', icon: 'dashboard' },
     { key: 'users', label: 'ユーザー管理', icon: 'manage_accounts' },
     { key: 'statuses', label: '入会ステータス', icon: 'fact_check' },
     { key: 'custom-fields', label: 'カスタムフィールド', icon: 'add_circle_outline' },
@@ -46,6 +47,7 @@ export default function Settings() {
 
       <div className="settings-content">
         {tab === 'general' && <GeneralSettings />}
+        {tab === 'dashboard' && <DashboardCardSettings />}
         {tab === 'users' && <UserSettings />}
         {tab === 'statuses' && <StatusSettings />}
         {tab === 'custom-fields' && <CustomFieldSettings />}
@@ -240,6 +242,282 @@ function NormalizeNamesCard() {
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ============ Dashboard Card Settings ============
+
+const CARD_COLOR_OPTIONS = [
+  { key: 'primary', label: '青' },
+  { key: 'info', label: 'シアン' },
+  { key: 'success', label: '緑' },
+  { key: 'warning', label: '黄' },
+  { key: 'danger', label: '赤' },
+  { key: 'muted', label: 'グレー' },
+];
+
+const ALL_MEMBERS_MARKER = '*';
+
+function DashboardCardSettings() {
+  const { toast } = useApp();
+  const [cards, setCards] = useState([]);
+  const [statuses, setStatuses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(null);
+
+  useEffect(() => { loadAll(); }, []);
+
+  async function loadAll() {
+    setLoading(true);
+    try {
+      const [c, s] = await Promise.all([api.getDashboardCards(), api.getStatuses()]);
+      setCards(c.cards);
+      setStatuses(s.statuses.map(x => x.name));
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startAdd() {
+    setEditingId('new');
+    setForm({
+      label: '',
+      icon: 'group',
+      color: 'muted',
+      statuses: [],
+      allMembers: false,
+      order: (cards.length + 1).toString(),
+    });
+  }
+
+  function startEdit(card) {
+    setEditingId(card.id);
+    setForm({
+      label: card.label,
+      icon: card.icon,
+      color: card.color,
+      statuses: card.statuses.filter(s => s !== ALL_MEMBERS_MARKER),
+      allMembers: card.statuses.includes(ALL_MEMBERS_MARKER),
+      order: card.order || '99',
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(null);
+  }
+
+  function toggleStatus(name) {
+    setForm(f => {
+      const set = new Set(f.statuses);
+      if (set.has(name)) set.delete(name);
+      else set.add(name);
+      return { ...f, statuses: Array.from(set) };
+    });
+  }
+
+  async function handleSave() {
+    if (!form.label.trim()) {
+      toast.warning('表示名を入力してください');
+      return;
+    }
+    const payload = {
+      label: form.label.trim(),
+      icon: form.icon.trim() || 'group',
+      color: form.color,
+      statuses: form.allMembers ? [ALL_MEMBERS_MARKER] : form.statuses,
+      order: parseInt(form.order) || 99,
+    };
+    try {
+      if (editingId === 'new') {
+        await api.addDashboardCard(payload);
+        toast.success('カードを追加しました');
+      } else {
+        await api.updateDashboardCard(editingId, payload);
+        toast.success('カードを更新しました');
+      }
+      cancelEdit();
+      loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
+  async function handleDelete(card) {
+    if (!confirm(`「${card.label}」を削除してよろしいですか？`)) return;
+    try {
+      await api.deleteDashboardCard(card.id);
+      toast.success('削除しました');
+      loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
+  if (loading) {
+    return <div style={{ textAlign: 'center', padding: 'var(--space-lg)' }}><div className="spinner" /></div>;
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h2 className="settings-section-title">ダッシュボードカード</h2>
+        {editingId === null && (
+          <button className="btn btn-primary btn-sm" onClick={startAdd}>
+            <Icon name="add" size={16} /> カードを追加
+          </button>
+        )}
+      </div>
+      <div className="card-body">
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+          ダッシュボード上部のカードを編集できます。表示順は数字の小さい順で並びます。
+        </p>
+
+        {/* 既存カード一覧 */}
+        {cards.length === 0 && editingId !== 'new' && (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>カードがありません</p>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          {cards.map(card => (
+            editingId === card.id ? (
+              <DashboardCardForm
+                key={card.id}
+                form={form}
+                setForm={setForm}
+                statuses={statuses}
+                toggleStatus={toggleStatus}
+                onSave={handleSave}
+                onCancel={cancelEdit}
+              />
+            ) : (
+              <div key={card.id} className="dashboard-card-row">
+                <div className={`stat-color-dot stat-${card.color}`} />
+                <Icon name={card.icon || 'group'} size={20} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600 }}>{card.label}</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+                    {card.statuses.includes(ALL_MEMBERS_MARKER)
+                      ? '名簿の全会員'
+                      : (card.statuses.length > 0 ? card.statuses.join(' / ') : '（未設定）')}
+                  </div>
+                </div>
+                <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>順{card.order}</span>
+                <button className="btn btn-secondary btn-sm" onClick={() => startEdit(card)} disabled={editingId !== null}>
+                  <Icon name="edit" size={14} /> 編集
+                </button>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(card)} disabled={editingId !== null}>
+                  <Icon name="delete" size={14} />
+                </button>
+              </div>
+            )
+          ))}
+
+          {editingId === 'new' && (
+            <DashboardCardForm
+              form={form}
+              setForm={setForm}
+              statuses={statuses}
+              toggleStatus={toggleStatus}
+              onSave={handleSave}
+              onCancel={cancelEdit}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardCardForm({ form, setForm, statuses, toggleStatus, onSave, onCancel }) {
+  return (
+    <div className="dashboard-card-edit">
+      <div className="form-row">
+        <div className="form-group" style={{ flex: 2 }}>
+          <label className="form-label">表示名</label>
+          <input
+            className="form-input"
+            value={form.label}
+            onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+            placeholder="例: 登録済み会員"
+          />
+        </div>
+        <div className="form-group" style={{ flex: 1 }}>
+          <label className="form-label">表示順</label>
+          <input
+            className="form-input"
+            type="number"
+            value={form.order}
+            onChange={e => setForm(f => ({ ...f, order: e.target.value }))}
+          />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group" style={{ flex: 1 }}>
+          <label className="form-label">アイコン名（Material Icons）</label>
+          <input
+            className="form-input"
+            value={form.icon}
+            onChange={e => setForm(f => ({ ...f, icon: e.target.value }))}
+            placeholder="例: how_to_reg, group_add, groups"
+          />
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
+            <a href="https://fonts.google.com/icons?icon.set=Material+Icons&icon.style=Outlined" target="_blank" rel="noopener noreferrer">
+              アイコン一覧
+            </a>
+            から名前を入力
+          </p>
+        </div>
+        <div className="form-group" style={{ flex: 1 }}>
+          <label className="form-label">色</label>
+          <select className="form-select" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))}>
+            {CARD_COLOR_OPTIONS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">集計対象</label>
+        <label className="bulk-check-item" style={{ padding: 'var(--space-xs) 0' }}>
+          <input
+            type="checkbox"
+            checked={form.allMembers}
+            onChange={e => setForm(f => ({ ...f, allMembers: e.target.checked }))}
+          />
+          <span><strong>名簿の全会員をカウント</strong>（ステータス問わず）</span>
+        </label>
+        {!form.allMembers && (
+          <>
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-xs)', marginBottom: 'var(--space-xs)' }}>
+              チェックを入れた入会ステータスの会員数を合算します
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 4, border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-sm)', maxHeight: 240, overflowY: 'auto' }}>
+              {statuses.length === 0 ? (
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>入会ステータス選択肢が登録されていません</span>
+              ) : statuses.map(s => (
+                <label key={s} className="bulk-check-item" style={{ padding: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.statuses.includes(s)}
+                    onChange={() => toggleStatus(s)}
+                  />
+                  <span>{s}</span>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+        <button className="btn btn-primary" onClick={onSave}>保存</button>
+        <button className="btn btn-secondary" onClick={onCancel}>キャンセル</button>
       </div>
     </div>
   );

@@ -293,6 +293,10 @@ class SheetsService {
         name: 'イベント種類',
         headers: ['種類名', '表示順'],
       },
+      {
+        name: 'ダッシュボードカード',
+        headers: ['ID', '表示名', 'アイコン', '色', '集計ステータス', '表示順', '有効'],
+      },
     ];
 
     const spreadsheet = await this.sheets.spreadsheets.get({
@@ -349,7 +353,66 @@ class SheetsService {
       });
     }
 
+    // デフォルトのダッシュボードカード
+    const { data: dashCardData } = await this.getSheetData('ダッシュボードカード');
+    if (dashCardData.length === 0) {
+      const PROSPECTS = '新規登録済,複数口目として登録済,移籍予定,申込書受領済,申込予定,クロージング中,入会保留中';
+      const REGISTERED = '新規登録済,複数口目として登録済,移籍登録済';
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: 'ダッシュボードカード!A:G',
+        valueInputOption: 'RAW',
+        requestBody: { values: [
+          [this.generateId(), '登録済み会員', 'how_to_reg', 'primary', REGISTERED, '1', 'true'],
+          [this.generateId(), '見込み含む', 'group_add', 'info', PROSPECTS, '2', 'true'],
+          [this.generateId(), 'お声がけ中', 'connect_without_contact', 'warning', '検討中', '3', 'true'],
+          [this.generateId(), '名簿総数', 'groups', 'muted', '*', '4', 'true'],
+        ]},
+      });
+    }
+
     return true;
+  }
+
+  // ============ Dashboard Cards ============
+
+  async _ensureDashboardCards() {
+    if (this._dashCardsEnsured) return;
+    const headers = ['ID', '表示名', 'アイコン', '色', '集計ステータス', '表示順', '有効'];
+    await this.ensureSheet('ダッシュボードカード', headers);
+    const { data: existing } = await this.getSheetData('ダッシュボードカード');
+    if (existing.length === 0) {
+      const PROSPECTS = '新規登録済,複数口目として登録済,移籍予定,申込書受領済,申込予定,クロージング中,入会保留中';
+      const REGISTERED = '新規登録済,複数口目として登録済,移籍登録済';
+      await this.appendRows('ダッシュボードカード', [
+        { 'ID': this.generateId(), '表示名': '登録済み会員', 'アイコン': 'how_to_reg', '色': 'primary', '集計ステータス': REGISTERED, '表示順': '1', '有効': 'true' },
+        { 'ID': this.generateId(), '表示名': '見込み含む', 'アイコン': 'group_add', '色': 'info', '集計ステータス': PROSPECTS, '表示順': '2', '有効': 'true' },
+        { 'ID': this.generateId(), '表示名': 'お声がけ中', 'アイコン': 'connect_without_contact', '色': 'warning', '集計ステータス': '検討中', '表示順': '3', '有効': 'true' },
+        { 'ID': this.generateId(), '表示名': '名簿総数', 'アイコン': 'groups', '色': 'muted', '集計ステータス': '*', '表示順': '4', '有効': 'true' },
+      ]);
+    }
+    this._dashCardsEnsured = true;
+  }
+
+  async getDashboardCards() {
+    await this._ensureDashboardCards();
+    const { data } = await this.getSheetData('ダッシュボードカード');
+    return data
+      .filter(d => d['有効'] !== 'false')
+      .sort((a, b) => (parseInt(a['表示順']) || 99) - (parseInt(b['表示順']) || 99))
+      .map(d => ({
+        id: d['ID'],
+        label: d['表示名'] || '',
+        icon: d['アイコン'] || 'group',
+        color: d['色'] || 'muted',
+        statuses: (d['集計ステータス'] || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean),
+        order: d['表示順'],
+        enabled: d['有効'] !== 'false',
+        _rowIndex: d._rowIndex,
+      }));
   }
 
   // ============ External Spreadsheet Access ============

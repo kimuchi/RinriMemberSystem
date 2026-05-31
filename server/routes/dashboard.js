@@ -2,43 +2,30 @@ const express = require('express');
 const sheets = require('../services/sheets');
 const router = express.Router();
 
-// 「見込み含む」にカウントする入会ステータス
-// 会員 + 動き中のプロスペクト（声がけ中・検討中は含まない）
-const PROSPECT_STATUSES = [
-  '新規登録済',
-  '複数口目として登録済',
-  '移籍予定',
-  '申込書受領済',
-  '申込予定',
-  'クロージング中',
-  '入会保留中',
-];
-
 router.get('/', async (req, res) => {
   try {
     const { data: members } = await sheets.getSheetData('会員名簿');
     const { data: events } = await sheets.getSheetData('イベント');
     const { data: attendance } = await sheets.getSheetData('イベント出席');
-    const { data: statusOptions } = await sheets.getSheetData('入会ステータス選択肢');
 
-    // 入会ステータスの選択肢名リスト
-    const allStatusNames = statusOptions.map(s => s['選択肢名']);
-
-    // 「登録済」を含むステータスを登録済みとみなす
-    const registeredStatuses = allStatusNames.filter(s => s.includes('登録済'));
-    const registered = members.filter(m =>
-      registeredStatuses.includes(m['入会ステータス'])
-    ).length;
-
-    // 「見込み含む」は指定ステータスの合計
-    const withProspects = members.filter(m =>
-      PROSPECT_STATUSES.includes(m['入会ステータス'])
-    ).length;
-
-    // 「検討中」の人数
-    const contacting = members.filter(m =>
-      m['入会ステータス'] === '検討中'
-    ).length;
+    // ダッシュボードカードの設定を読み込み、各カードのカウントを算出
+    const cardConfigs = await sheets.getDashboardCards();
+    const cards = cardConfigs.map(c => {
+      let count = 0;
+      if (c.statuses.includes('*')) {
+        count = members.length;
+      } else if (c.statuses.length > 0) {
+        const set = new Set(c.statuses);
+        count = members.filter(m => set.has(m['入会ステータス'])).length;
+      }
+      return {
+        id: c.id,
+        label: c.label,
+        icon: c.icon,
+        color: c.color,
+        count,
+      };
+    });
 
     // ステータス別集計
     const statusBreakdown = {};
@@ -75,7 +62,8 @@ router.get('/', async (req, res) => {
     });
 
     res.json({
-      counts: { registered, withProspects, contacting, total: members.length },
+      cards,
+      counts: { total: members.length },
       statusBreakdown,
       recentEvents,
       typeStats: Object.entries(typeStats).map(([type, s]) => ({

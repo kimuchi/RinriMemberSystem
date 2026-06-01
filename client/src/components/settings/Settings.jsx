@@ -62,19 +62,21 @@ function GeneralSettings() {
   const { toast, unitName, setUnitName } = useApp();
   const [name, setName] = useState(unitName || '');
   const [spreadsheetId, setSpreadsheetId] = useState('');
+  const [checkItems, setCheckItems] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.getGeneral().then(d => {
       setName(d.unitName || '');
       setSpreadsheetId(d.spreadsheetId || '');
+      setCheckItems(d.attendanceCheckItems || '');
     });
   }, []);
 
   async function handleSave() {
     setSaving(true);
     try {
-      await api.updateGeneral({ unitName: name });
+      await api.updateGeneral({ unitName: name, attendanceCheckItems: checkItems });
       setUnitName(name);
       toast.success('設定を保存しました');
     } catch (err) {
@@ -106,6 +108,20 @@ function GeneralSettings() {
               </a>
             </div>
           )}
+          <div className="form-group">
+            <label className="form-label">出席登録リスト チェック項目（既定）</label>
+            <input
+              className="form-input"
+              value={checkItems}
+              onChange={e => setCheckItems(e.target.value)}
+              placeholder="例: 朝礼, MS, 朝食会"
+              style={{ maxWidth: 600 }}
+            />
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              イベント詳細から出力する「出席登録リスト(Excel)」のチェック列の既定値。カンマ区切り。
+              出力時にイベントごとに編集できます。
+            </p>
+          </div>
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? '保存中...' : '保存する'}
           </button>

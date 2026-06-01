@@ -169,4 +169,216 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-module.exports = { buildExcelBuffer, buildStatusColorMap };
+/**
+ * イベント受付用 出席登録リスト (A4縦) を生成
+ * - タイトル / 開催情報
+ * - 事前登録者一覧（番号・氏名・ふりがな・会社名・事前登録状態・チェック項目×N）
+ * - ドタ参加用の空欄
+ * @param {Object} opts
+ * @param {{name:string,date?:string,location?:string,type?:string}} opts.event
+ * @param {Array<{name:string,furigana:string,company:string,status:string}>} opts.attendees
+ * @param {string[]} opts.checkItems  - 当日チェック列名（例: ['朝礼','MS','朝食会']）
+ * @param {number} [opts.walkInRows]  - ドタ参加用の空行数（既定: 10）
+ * @param {boolean} [opts.includeCompany] - 会社名列を含めるか（既定: true）
+ */
+async function buildAttendanceListExcel({
+  event,
+  attendees,
+  checkItems = [],
+  walkInRows = 10,
+  includeCompany = true,
+}) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Rinri Member System';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('出席登録リスト', {
+    pageSetup: {
+      paperSize: 9, // A4
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      horizontalCentered: true,
+      margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.2, footer: 0.2 },
+    },
+  });
+
+  // ===== 列定義 =====
+  // No | 氏名 | ふりがな | (会社名) | 事前登録 | チェック項目... | (備考は無し)
+  const cols = [];
+  cols.push({ key: 'no', label: 'No', width: 4 });
+  cols.push({ key: 'name', label: '氏名', width: 18 });
+  cols.push({ key: 'furigana', label: 'ふりがな', width: 16 });
+  if (includeCompany) cols.push({ key: 'company', label: '会社名', width: 22 });
+  cols.push({ key: 'status', label: '事前登録', width: 9 });
+  for (const item of checkItems) {
+    cols.push({ key: `check:${item}`, label: item, width: 6, isCheck: true });
+  }
+  const totalCols = cols.length;
+  const lastColLetter = colToLetter(totalCols - 1);
+
+  // ===== タイトル行 =====
+  // 1行目: イベント名
+  ws.getCell('A1').value = event.name || '(イベント名未設定)';
+  ws.mergeCells(`A1:${lastColLetter}1`);
+  ws.getCell('A1').font = { name: FONT_NAME, size: 16, bold: true };
+  ws.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(1).height = 30;
+
+  // 2行目: 日時 / 場所 / 種類
+  const info = [];
+  if (event.date) info.push(`日時: ${formatDateTime(event.date)}`);
+  if (event.location) info.push(`場所: ${event.location}`);
+  if (event.type) info.push(`種類: ${event.type}`);
+  ws.getCell('A2').value = info.join('　　') || '';
+  ws.mergeCells(`A2:${lastColLetter}2`);
+  ws.getCell('A2').font = { name: FONT_NAME, size: 11 };
+  ws.getCell('A2').alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(2).height = 20;
+
+  // 3行目: サマリ（事前登録N名 / 印刷日）
+  const summary = `事前登録: ${attendees.length}名　／　印刷日: ${formatDate(new Date())}`;
+  ws.getCell('A3').value = summary;
+  ws.mergeCells(`A3:${lastColLetter}3`);
+  ws.getCell('A3').font = { name: FONT_NAME, size: 9, color: { argb: 'FF666666' } };
+  ws.getCell('A3').alignment = { vertical: 'middle', horizontal: 'right' };
+  ws.getRow(3).height = 16;
+
+  // ===== ヘッダー行 (4行目) =====
+  const HEADER_ROW = 4;
+  const headerRow = ws.getRow(HEADER_ROW);
+  cols.forEach((col, idx) => {
+    const cell = headerRow.getCell(idx + 1);
+    cell.value = col.label;
+    cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: COLOR.headerFg } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.headerBg } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = thinBorder();
+  });
+  headerRow.height = 26;
+
+  // ===== 事前登録者データ行 =====
+  let currentRow = HEADER_ROW + 1;
+  attendees.forEach((att, i) => {
+    const row = ws.getRow(currentRow);
+    row.height = 24;
+    cols.forEach((col, colIdx) => {
+      const cell = row.getCell(colIdx + 1);
+      cell.font = { name: FONT_NAME, size: 11 };
+      cell.border = thinBorder();
+      cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck ? 'center' : 'left', wrapText: false };
+
+      if (col.key === 'no') cell.value = i + 1;
+      else if (col.key === 'name') cell.value = att.name || '';
+      else if (col.key === 'furigana') cell.value = att.furigana || '';
+      else if (col.key === 'company') cell.value = att.company || '';
+      else if (col.key === 'status') {
+        cell.value = att.status || '';
+        // 事前登録は薄青、出席は薄緑などで分かりやすく
+        const bg = statusFill(att.status);
+        if (bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      } else if (col.isCheck) {
+        // チェック欄は空（手書き用）。やや太い罫線で目立たせる
+        cell.value = '';
+        cell.border = checkBorder();
+      }
+    });
+    currentRow++;
+  });
+
+  // ===== ドタ参加セクション =====
+  if (walkInRows > 0) {
+    // 区切り行
+    const sepRow = ws.getRow(currentRow);
+    sepRow.getCell(1).value = 'ドタ参加（飛び込み参加）';
+    ws.mergeCells(currentRow, 1, currentRow, totalCols);
+    sepRow.getCell(1).font = { name: FONT_NAME, size: 11, bold: true, color: { argb: 'FF1565C0' } };
+    sepRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+    sepRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE3F2FD' } };
+    sepRow.getCell(1).border = thinBorder();
+    sepRow.height = 22;
+    currentRow++;
+
+    // 空欄行
+    const walkInStartNo = attendees.length + 1;
+    for (let i = 0; i < walkInRows; i++) {
+      const row = ws.getRow(currentRow);
+      row.height = 26; // 手書きしやすい高さ
+      cols.forEach((col, colIdx) => {
+        const cell = row.getCell(colIdx + 1);
+        cell.font = { name: FONT_NAME, size: 11 };
+        cell.border = thinBorder();
+        cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck ? 'center' : 'left' };
+        if (col.key === 'no') {
+          cell.value = walkInStartNo + i;
+          cell.font = { name: FONT_NAME, size: 11, color: { argb: 'FF999999' } };
+        } else if (col.isCheck) {
+          cell.border = checkBorder();
+        }
+        // それ以外は空欄
+      });
+      currentRow++;
+    }
+  }
+
+  // ===== 列幅を適用 =====
+  cols.forEach((col, idx) => {
+    ws.getColumn(idx + 1).width = col.width;
+  });
+
+  // タイトル+ヘッダー行を印刷時に各ページで繰り返し
+  ws.pageSetup.printTitlesRow = `1:${HEADER_ROW}`;
+
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+function colToLetter(idx) {
+  let result = '';
+  let n = idx;
+  while (n >= 0) {
+    result = String.fromCharCode(65 + (n % 26)) + result;
+    n = Math.floor(n / 26) - 1;
+  }
+  return result;
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const day = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+  return `${y}年${mo}月${da}日（${day}）${h}:${mi}`;
+}
+
+function formatDate(d) {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}/${mo}/${da}`;
+}
+
+function statusFill(status) {
+  if (!status) return null;
+  if (status === '出席') return 'FFE8F5E9';
+  if (status === '事前登録') return 'FFE3F2FD';
+  if (status === '遅刻') return 'FFFFF8E1';
+  if (status === '欠席') return 'FFFFEBEE';
+  return null;
+}
+
+// チェック欄用の罫線（やや濃いめ）
+function checkBorder() {
+  return {
+    top:    { style: 'medium', color: { argb: 'FF888888' } },
+    left:   { style: 'medium', color: { argb: 'FF888888' } },
+    bottom: { style: 'medium', color: { argb: 'FF888888' } },
+    right:  { style: 'medium', color: { argb: 'FF888888' } },
+  };
+}
+
+module.exports = { buildExcelBuffer, buildStatusColorMap, buildAttendanceListExcel };

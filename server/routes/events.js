@@ -1,6 +1,6 @@
 const express = require('express');
 const sheets = require('../services/sheets');
-const { buildExcelBuffer, buildStatusColorMap } = require('../utils/excel-export');
+const { buildExcelBuffer, buildStatusColorMap, buildAttendanceListExcel } = require('../utils/excel-export');
 const formImportRouter = require('./form-import');
 const router = express.Router();
 
@@ -395,6 +395,76 @@ router.post('/:id/export', async (req, res) => {
   } catch (err) {
     console.error('Event export error:', err);
     res.status(500).json({ error: err.message || 'エクスポートに失敗しました' });
+  }
+});
+
+/**
+ * POST /api/events/:id/attendance-list - 当日受付用の出席登録リスト(Excel)
+ * body: {
+ *   checkItems?: string[],  // チェック列名（例: ['朝礼','MS','朝食会']）
+ *   walkInRows?: number,    // ドタ参加用の空欄行数（既定: 10）
+ *   includeCompany?: boolean,
+ * }
+ */
+router.post('/:id/attendance-list', async (req, res) => {
+  try {
+    const { checkItems, walkInRows, includeCompany } = req.body || {};
+
+    const { data: events } = await sheets.getSheetData('イベント');
+    const event = events.find(e => e['ID'] === req.params.id);
+    if (!event) return res.status(404).json({ error: 'イベントが見つかりません' });
+
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const { data: members } = await sheets.getSheetData('会員名簿');
+
+    const memberById = {};
+    members.forEach(m => { memberById[m['ID']] = m; });
+
+    // 出席者（ふりがな順）
+    const attendees = attendance
+      .filter(a => a['イベントID'] === req.params.id)
+      .map(a => {
+        const m = memberById[a['会員ID']] || {};
+        return {
+          name: m['氏名'] || a['氏名'] || '',
+          furigana: m['ふりがな'] || '',
+          company: m['会社名'] || '',
+          status: a['出席状態'] || '',
+        };
+      })
+      .sort((a, b) => (a.furigana || '').localeCompare(b.furigana || '', 'ja'));
+
+    const buffer = await buildAttendanceListExcel({
+      event: {
+        name: event['イベント名'],
+        date: event['日時'],
+        location: event['場所'],
+        type: event['種類'],
+      },
+      attendees,
+      checkItems: Array.isArray(checkItems) ? checkItems.filter(Boolean) : [],
+      walkInRows: typeof walkInRows === 'number' && walkInRows >= 0 ? walkInRows : 10,
+      includeCompany: includeCompany !== false,
+    });
+
+    // ファイル名
+    const safeName = (event['イベント名'] || 'event').replace(/[\\/:*?"<>|]/g, '_');
+    const dateStr = (event['日時'] || '').slice(0, 10).replace(/-/g, '');
+    const filename = `出席登録リスト_${safeName}${dateStr ? '_' + dateStr : ''}.xlsx`;
+    const encoded = encodeURIComponent(filename);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="attendance-list.xlsx"; filename*=UTF-8''${encoded}`
+    );
+    res.send(buffer);
+  } catch (err) {
+    console.error('Attendance list export error:', err);
+    res.status(500).json({ error: err.message || '出席登録リストの生成に失敗しました' });
   }
 });
 

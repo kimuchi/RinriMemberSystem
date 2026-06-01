@@ -35,6 +35,13 @@ export default function EventDetail() {
   const [selectedCols, setSelectedCols] = useState(new Set());
   const [exporting, setExporting] = useState(false);
 
+  // 出席登録リスト（受付用）モーダル
+  const [showListModal, setShowListModal] = useState(false);
+  const [listCheckItems, setListCheckItems] = useState('');
+  const [listWalkInRows, setListWalkInRows] = useState(10);
+  const [listIncludeCompany, setListIncludeCompany] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
+
   useEffect(() => { loadData(); }, [id]);
 
   async function loadData() {
@@ -231,6 +238,39 @@ export default function EventDetail() {
     }
   }
 
+  // 受付用 出席登録リスト
+  async function openListModal() {
+    setShowListModal(true);
+    // 既定のチェック項目を取得
+    try {
+      const gen = await api.getGeneral();
+      setListCheckItems(gen.attendanceCheckItems || '');
+    } catch (err) {
+      // 失敗しても空のまま続行
+    }
+  }
+
+  async function handleListExport() {
+    const items = listCheckItems
+      .split(/[,、，]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    setListLoading(true);
+    try {
+      await api.exportEventAttendanceList(id, {
+        checkItems: items,
+        walkInRows: Number(listWalkInRows) || 0,
+        includeCompany: listIncludeCompany,
+      });
+      toast.success('出席登録リストを出力しました');
+      setShowListModal(false);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setListLoading(false);
+    }
+  }
+
   if (loading) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
   }
@@ -324,6 +364,9 @@ export default function EventDetail() {
           <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
             {attendance.length > 0 && (
               <>
+                <button className="btn btn-secondary btn-sm" onClick={openListModal}>
+                  <Icon name="print" size={16} /> 出席登録リスト(Excel)
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={openExportModal}>
                   <Icon name="download" size={16} /> Excelエクスポート
                 </button>
@@ -527,6 +570,71 @@ export default function EventDetail() {
                   {exporting ? '出力中...' : 'エクスポート'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 出席登録リスト（受付用）モーダル */}
+      {showListModal && (
+        <div className="modal-overlay" onClick={() => !listLoading && setShowListModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>出席登録リスト（当日受付用）</h2>
+              <button className="btn-icon" onClick={() => setShowListModal(false)} disabled={listLoading}>
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+                A4縦・Meiryo UI で印刷できる受付名簿(Excel)を生成します。<br />
+                事前登録者{attendance.length}名 ＋ ドタ参加用の空欄行を含みます。
+              </p>
+
+              <div className="form-group">
+                <label className="form-label">参加チェック項目（カンマ区切り）</label>
+                <input
+                  className="form-input"
+                  value={listCheckItems}
+                  onChange={e => setListCheckItems(e.target.value)}
+                  placeholder="例: 朝礼, MS, 朝食会"
+                />
+                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                  各項目が手書きチェック用の列になります（空欄なら印刷されません）。
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">ドタ参加用の空欄行数</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  max="50"
+                  value={listWalkInRows}
+                  onChange={e => setListWalkInRows(e.target.value)}
+                  style={{ maxWidth: 120 }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={listIncludeCompany}
+                    onChange={e => setListIncludeCompany(e.target.checked)}
+                  />
+                  <span>会社名の列を含める</span>
+                </label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowListModal(false)} disabled={listLoading}>
+                キャンセル
+              </button>
+              <button className="btn btn-primary" onClick={handleListExport} disabled={listLoading}>
+                <Icon name="print" size={16} />
+                {listLoading ? '生成中...' : 'ダウンロード'}
+              </button>
             </div>
           </div>
         </div>

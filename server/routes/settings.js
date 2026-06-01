@@ -345,7 +345,12 @@ router.delete('/dashboard-cards/:id', ownerOnly, async (req, res) => {
 router.get('/general', async (req, res) => {
   try {
     const unitName = await sheets.getSetting('単会名');
-    res.json({ unitName, spreadsheetId: process.env.SPREADSHEET_ID });
+    const attendanceCheckItems = await sheets.getSetting('出席登録リスト_チェック項目');
+    res.json({
+      unitName,
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      attendanceCheckItems: attendanceCheckItems || '',
+    });
   } catch (err) {
     res.status(500).json({ error: '設定の取得に失敗しました' });
   }
@@ -353,7 +358,10 @@ router.get('/general', async (req, res) => {
 
 router.put('/general', ownerOnly, async (req, res) => {
   try {
-    if (req.body.unitName) await sheets.setSetting('単会名', req.body.unitName);
+    if (req.body.unitName !== undefined) await sheets.setSetting('単会名', req.body.unitName);
+    if (req.body.attendanceCheckItems !== undefined) {
+      await sheets.setSetting('出席登録リスト_チェック項目', req.body.attendanceCheckItems);
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: '設定の更新に失敗しました' });

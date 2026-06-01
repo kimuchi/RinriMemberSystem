@@ -39,9 +39,10 @@ export default function EventDetail() {
   const [showListModal, setShowListModal] = useState(false);
   const [listCheckItems, setListCheckItems] = useState('');
   const [listWalkInRows, setListWalkInRows] = useState(10);
-  const [listIncludeCompany, setListIncludeCompany] = useState(true);
   const [listLoading, setListLoading] = useState(false);
-  const [listInfoCols, setListInfoCols] = useState([]);       // 利用可能な出席情報列
+  const [listFields, setListFields] = useState(null);                // 出力候補（basic/custom/extra/attendanceInfoColumns）
+  const [listSelectedMember, setListSelectedMember] = useState(new Set()); // 選択した会員列名
+  const [listIncludeStatus, setListIncludeStatus] = useState(true);  // 事前登録列を含める
   const [listSelectedInfo, setListSelectedInfo] = useState(new Set());
 
   useEffect(() => { loadData(); }, [id]);
@@ -243,19 +244,50 @@ export default function EventDetail() {
   // 受付用 出席登録リスト
   async function openListModal() {
     setShowListModal(true);
-    // 既定のチェック項目 & 利用可能な出席情報列を取得
     try {
-      const [gen, info] = await Promise.all([
+      const [gen, fields] = await Promise.all([
         api.getGeneral(),
-        api.getAttendanceInfoColumns(id),
+        api.getAttendanceListFields(id),
       ]);
       setListCheckItems(gen.attendanceCheckItems || '');
-      setListInfoCols(info.columns || []);
-      // デフォルトで全部チェック
-      setListSelectedInfo(new Set(info.columns || []));
+      setListFields(fields);
+      // デフォルト選択
+      const defaultMember = new Set(['ふりがな', '会社名']);
+      const allMember = [
+        ...(fields.basic || []),
+        ...(fields.custom || []),
+        ...(fields.extra || []),
+      ];
+      // 氏名はデフォルト固定で含める（UIではチェック不可表示）
+      defaultMember.add('氏名');
+      const initial = new Set();
+      allMember.forEach(c => { if (defaultMember.has(c.key)) initial.add(c.key); });
+      setListSelectedMember(initial);
+      setListIncludeStatus(true);
+      setListSelectedInfo(new Set(fields.attendanceInfoColumns || []));
     } catch (err) {
-      // 失敗しても続行
+      toast.error(err.message);
     }
+  }
+
+  function toggleListMember(key) {
+    if (key === '氏名') return; // 氏名は常に含める
+    setListSelectedMember(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleListMemberGroup(cols) {
+    const keys = cols.map(c => c.key).filter(k => k !== '氏名');
+    const allChecked = keys.length > 0 && keys.every(k => listSelectedMember.has(k));
+    setListSelectedMember(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allChecked ? next.delete(k) : next.add(k));
+      return next;
+    });
   }
 
   function toggleInfoCol(col) {
@@ -268,17 +300,26 @@ export default function EventDetail() {
   }
 
   async function handleListExport() {
+    if (!listFields) return;
     const items = listCheckItems
       .split(/[,、，]/)
       .map(s => s.trim())
       .filter(Boolean);
+    // 表示順を保って会員列配列を構築
+    const orderedMember = [
+      ...(listFields.basic || []),
+      ...(listFields.custom || []),
+      ...(listFields.extra || []),
+    ].filter(c => listSelectedMember.has(c.key) && c.key !== '氏名');
+
     setListLoading(true);
     try {
       await api.exportEventAttendanceList(id, {
-        checkItems: items,
+        memberColumns: orderedMember,
+        includeAttendanceStatus: listIncludeStatus,
         infoColumns: Array.from(listSelectedInfo),
+        checkItems: items,
         walkInRows: Number(listWalkInRows) || 0,
-        includeCompany: listIncludeCompany,
       });
       toast.success('出席登録リストを出力しました');
       setShowListModal(false);
@@ -602,69 +643,91 @@ export default function EventDetail() {
                 <Icon name="close" size={20} />
               </button>
             </div>
-            <div className="modal-body">
+            <div className="modal-body" style={{ overflowY: 'auto' }}>
               <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
                 A4縦・Meiryo UI で印刷できる受付名簿(Excel)を生成します。<br />
                 事前登録者{attendance.length}名 ＋ ドタ参加用の空欄行を含みます。
+                <span style={{ display: 'inline-block', marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                  列を多く選びすぎるとA4に収まらなくなることがあります。
+                </span>
               </p>
 
-              {listInfoCols.length > 0 && (
-                <div className="form-group">
-                  <label className="form-label">自動出力する出席情報列（フォーム取込済みの情報）</label>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-xs)' }}>
-                    フォーム取込で記録した懇親会出欠などを ○ で表示します（不参加/欠席/なし などは空欄）。
-                  </p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
-                    {listInfoCols.map(col => (
-                      <label key={col} className="bulk-check-item" style={{ padding: '4px 8px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
-                        <input
-                          type="checkbox"
-                          checked={listSelectedInfo.has(col)}
-                          onChange={() => toggleInfoCol(col)}
-                        />
-                        <span>{col}</span>
-                      </label>
-                    ))}
+              {!listFields ? (
+                <div style={{ textAlign: 'center', padding: 'var(--space-lg)' }}><div className="spinner" /></div>
+              ) : (
+                <>
+                  {/* 会員列 */}
+                  <div className="form-group">
+                    <label className="form-label">出力する項目（会員情報）</label>
+                    <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-xs)' }}>
+                      「氏名」は常に出力されます。
+                    </p>
+                    {renderListMemberGroup('基本情報', listFields.basic)}
+                    {listFields.custom?.length > 0 && renderListMemberGroup('カスタムフィールド', listFields.custom)}
+                    {listFields.extra?.length > 0 && renderListMemberGroup('追加列', listFields.extra)}
                   </div>
-                </div>
+
+                  {/* 出席状態 */}
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={listIncludeStatus}
+                        onChange={e => setListIncludeStatus(e.target.checked)}
+                      />
+                      <span><strong>事前登録</strong>列を含める（出席状態を表示）</span>
+                    </label>
+                  </div>
+
+                  {/* 出席情報列 */}
+                  {(listFields.attendanceInfoColumns || []).length > 0 && (
+                    <div className="form-group">
+                      <label className="form-label">自動出力する出席情報列（フォーム取込済の情報）</label>
+                      <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-xs)' }}>
+                        懇親会出欠などを ○ で表示します（不参加/欠席/なし などは空欄）。
+                      </p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
+                        {listFields.attendanceInfoColumns.map(col => (
+                          <label key={col} className="bulk-check-item" style={{ padding: '4px 8px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                            <input
+                              type="checkbox"
+                              checked={listSelectedInfo.has(col)}
+                              onChange={() => toggleInfoCol(col)}
+                            />
+                            <span>{col}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="form-group">
+                    <label className="form-label">参加チェック項目（カンマ区切り・手書き用）</label>
+                    <input
+                      className="form-input"
+                      value={listCheckItems}
+                      onChange={e => setListCheckItems(e.target.value)}
+                      placeholder="例: 朝礼, MS, 朝食会"
+                    />
+                    <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                      当日に手書きでチェックする列になります（空欄なら印刷されません）。
+                    </p>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">ドタ参加用の空欄行数</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={listWalkInRows}
+                      onChange={e => setListWalkInRows(e.target.value)}
+                      style={{ maxWidth: 120 }}
+                    />
+                  </div>
+                </>
               )}
-
-              <div className="form-group">
-                <label className="form-label">参加チェック項目（カンマ区切り・手書き用）</label>
-                <input
-                  className="form-input"
-                  value={listCheckItems}
-                  onChange={e => setListCheckItems(e.target.value)}
-                  placeholder="例: 朝礼, MS, 朝食会"
-                />
-                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                  当日に手書きでチェックする列になります（空欄なら印刷されません）。
-                </p>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">ドタ参加用の空欄行数</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="50"
-                  value={listWalkInRows}
-                  onChange={e => setListWalkInRows(e.target.value)}
-                  style={{ maxWidth: 120 }}
-                />
-              </div>
-
-              <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={listIncludeCompany}
-                    onChange={e => setListIncludeCompany(e.target.checked)}
-                  />
-                  <span>会社名の列を含める</span>
-                </label>
-              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowListModal(false)} disabled={listLoading}>
@@ -680,6 +743,44 @@ export default function EventDetail() {
       )}
     </div>
   );
+
+  function renderListMemberGroup(title, cols) {
+    if (!cols || cols.length === 0) return null;
+    const selectableKeys = cols.map(c => c.key).filter(k => k !== '氏名');
+    const allChecked = selectableKeys.length > 0 && selectableKeys.every(k => listSelectedMember.has(k));
+    return (
+      <div style={{ marginBottom: 'var(--space-sm)' }}>
+        <label className="bulk-check-item" style={{ fontWeight: 600, background: 'var(--color-bg-secondary)' }}>
+          <input
+            type="checkbox"
+            checked={allChecked}
+            onChange={() => toggleListMemberGroup(cols)}
+            disabled={selectableKeys.length === 0}
+          />
+          <span>{title}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+            {selectableKeys.filter(k => listSelectedMember.has(k)).length} / {selectableKeys.length}
+          </span>
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+          {cols.map(c => {
+            const isName = c.key === '氏名';
+            return (
+              <label key={c.key} className="bulk-check-item" style={{ paddingLeft: 'var(--space-lg)' }}>
+                <input
+                  type="checkbox"
+                  checked={isName ? true : listSelectedMember.has(c.key)}
+                  onChange={() => toggleListMember(c.key)}
+                  disabled={isName}
+                />
+                <span>{c.label}{isName ? '（常に出力）' : ''}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   function renderExportGroup(title, cols) {
     if (!cols || cols.length === 0) return null;

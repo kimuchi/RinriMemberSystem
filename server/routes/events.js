@@ -407,22 +407,51 @@ router.post('/:id/export', async (req, res) => {
  * }
  */
 /**
- * GET /api/events/:id/attendance-info-columns
- * 受付名簿で「自動出力できる出席情報列」（イベント出席シートの自由列）を返す
+ * GET /api/events/:id/attendance-list-fields
+ * 受付名簿の出力候補列を返す（会員列・出席情報列）
  */
-router.get('/:id/attendance-info-columns', async (req, res) => {
+router.get('/:id/attendance-list-fields', async (req, res) => {
   try {
-    const columns = await sheets.getAttendanceExtraColumns();
-    res.json({ columns });
+    const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
+    const customFields = await sheets.getCustomFields();
+    const customNames = new Set(customFields.map(cf => cf.name));
+    const systemSet = new Set(['ID', '登録日', '更新日']);
+    const basicSet = new Set([
+      '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+      '会社名', '住所', '会社電話番号', '入会ステータス', '備考',
+    ]);
+
+    const basic = [];
+    const custom = [];
+    const extra = [];
+    for (const h of memberHeaders) {
+      if (systemSet.has(h)) continue;
+      const col = { key: h, label: h };
+      if (customNames.has(h)) custom.push(col);
+      else if (basicSet.has(h)) basic.push(col);
+      else extra.push(col);
+    }
+
+    const attendanceInfoColumns = await sheets.getAttendanceExtraColumns();
+
+    res.json({ basic, custom, extra, attendanceInfoColumns });
   } catch (err) {
-    console.error('Get attendance info columns error:', err);
-    res.status(500).json({ error: '出席情報列の取得に失敗しました' });
+    console.error('Get attendance-list-fields error:', err);
+    res.status(500).json({ error: '出力候補列の取得に失敗しました' });
   }
 });
 
 router.post('/:id/attendance-list', async (req, res) => {
   try {
-    const { checkItems, infoColumns, walkInRows, includeCompany } = req.body || {};
+    const {
+      memberColumns,
+      includeAttendanceStatus,
+      infoColumns,
+      checkItems,
+      walkInRows,
+      // 旧パラメータ（後方互換）
+      includeCompany,
+    } = req.body || {};
 
     const { data: events } = await sheets.getSheetData('イベント');
     const event = events.find(e => e['ID'] === req.params.id);
@@ -436,6 +465,17 @@ router.post('/:id/attendance-list', async (req, res) => {
 
     const selectedInfoCols = Array.isArray(infoColumns) ? infoColumns.filter(Boolean) : [];
 
+    // 出力する会員列: 明示指定があればそれを使う。なければデフォルト + 旧 includeCompany
+    let memberCols;
+    if (Array.isArray(memberColumns) && memberColumns.length > 0) {
+      memberCols = memberColumns
+        .filter(c => c && typeof c === 'object' && c.key)
+        .map(c => ({ key: c.key, label: c.label || c.key }));
+    } else {
+      memberCols = [{ key: 'ふりがな', label: 'ふりがな' }];
+      if (includeCompany !== false) memberCols.push({ key: '会社名', label: '会社名' });
+    }
+
     // 出席者（ふりがな順）
     const attendees = attendance
       .filter(a => a['イベントID'] === req.params.id)
@@ -446,14 +486,13 @@ router.post('/:id/attendance-list', async (req, res) => {
           info[col] = a[col] || '';
         }
         return {
-          name: m['氏名'] || a['氏名'] || '',
-          furigana: m['ふりがな'] || '',
-          company: m['会社名'] || '',
-          status: a['出席状態'] || '',
+          member: m,
+          fallbackName: a['氏名'],
+          attendanceStatus: a['出席状態'] || '',
           info,
         };
       })
-      .sort((a, b) => (a.furigana || '').localeCompare(b.furigana || '', 'ja'));
+      .sort((a, b) => ((a.member['ふりがな'] || '')).localeCompare(b.member['ふりがな'] || '', 'ja'));
 
     const buffer = await buildAttendanceListExcel({
       event: {
@@ -463,10 +502,11 @@ router.post('/:id/attendance-list', async (req, res) => {
         type: event['種類'],
       },
       attendees,
-      checkItems: Array.isArray(checkItems) ? checkItems.filter(Boolean) : [],
+      memberColumns: memberCols,
+      includeAttendanceStatus: includeAttendanceStatus !== false,
       infoColumns: selectedInfoCols,
+      checkItems: Array.isArray(checkItems) ? checkItems.filter(Boolean) : [],
       walkInRows: typeof walkInRows === 'number' && walkInRows >= 0 ? walkInRows : 10,
-      includeCompany: includeCompany !== false,
     });
 
     // ファイル名

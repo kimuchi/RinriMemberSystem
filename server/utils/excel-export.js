@@ -169,27 +169,42 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+// 列名 → 印刷時の推奨幅（A4縦・Meiryo UI 11pt前提）
+const MEMBER_COL_WIDTHS = {
+  '氏名': 18,
+  'ふりがな': 16,
+  '会社名': 22,
+  'メールアドレス': 28,
+  '携帯電話番号': 14,
+  '会社電話番号': 14,
+  '住所': 30,
+  '入会ステータス': 14,
+  '備考': 20,
+};
+
 /**
  * イベント受付用 出席登録リスト (A4縦) を生成
  * - タイトル / 開催情報
- * - 事前登録者一覧（番号・氏名・ふりがな・会社名・事前登録状態・情報列・チェック項目×N）
+ * - 事前登録者一覧（No・氏名・選択した会員列・事前登録状態・情報列・チェック項目×N）
  * - ドタ参加用の空欄
  * @param {Object} opts
  * @param {{name:string,date?:string,location?:string,type?:string}} opts.event
- * @param {Array<{name,furigana,company,status,info?:Object<string,string>}>} opts.attendees
- *   - info: { 列名: 値 } 例: { 懇親会: '参加します' }
- * @param {string[]} opts.checkItems  - 当日手書きチェック列名（例: ['朝礼','MS','朝食会']）
+ * @param {Array<{member:Object,fallbackName?:string,attendanceStatus:string,info?:Object<string,string>}>} opts.attendees
+ * @param {Array<{key:string,label:string}>} [opts.memberColumns]
+ *   - 出力する会員列。氏名以外の列。例: [{key:'ふりがな',label:'ふりがな'},{key:'会社名',label:'会社名'}]
+ * @param {boolean} [opts.includeAttendanceStatus] - 事前登録（出席状態）列を含めるか
  * @param {string[]} [opts.infoColumns] - 自動出力する出席情報列（例: ['懇親会']）
+ * @param {string[]} [opts.checkItems]  - 手書きチェック列名（例: ['朝礼','MS','朝食会']）
  * @param {number} [opts.walkInRows]  - ドタ参加用の空行数（既定: 10）
- * @param {boolean} [opts.includeCompany] - 会社名列を含めるか（既定: true）
  */
 async function buildAttendanceListExcel({
   event,
   attendees,
-  checkItems = [],
+  memberColumns = [{ key: 'ふりがな', label: 'ふりがな' }, { key: '会社名', label: '会社名' }],
+  includeAttendanceStatus = true,
   infoColumns = [],
+  checkItems = [],
   walkInRows = 10,
-  includeCompany = true,
 }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Rinri Member System';
@@ -207,13 +222,22 @@ async function buildAttendanceListExcel({
   });
 
   // ===== 列定義 =====
-  // No | 氏名 | ふりがな | (会社名) | 事前登録 | チェック項目... | (備考は無し)
+  // No | 氏名 | （ユーザー選択の会員列） | （事前登録） | 出席情報列 | チェック項目
   const cols = [];
-  cols.push({ key: 'no', label: 'No', width: 4 });
-  cols.push({ key: 'name', label: '氏名', width: 18 });
-  cols.push({ key: 'furigana', label: 'ふりがな', width: 16 });
-  if (includeCompany) cols.push({ key: 'company', label: '会社名', width: 22 });
-  cols.push({ key: 'status', label: '事前登録', width: 9 });
+  cols.push({ key: '__no', label: 'No', width: 4 });
+  cols.push({ key: 'member:氏名', label: '氏名', width: MEMBER_COL_WIDTHS['氏名'], memberField: '氏名' });
+  for (const mc of memberColumns) {
+    if (!mc || !mc.key || mc.key === '氏名') continue; // 氏名は常に出力済み
+    cols.push({
+      key: `member:${mc.key}`,
+      label: mc.label || mc.key,
+      width: MEMBER_COL_WIDTHS[mc.key] || 14,
+      memberField: mc.key,
+    });
+  }
+  if (includeAttendanceStatus) {
+    cols.push({ key: '__status', label: '事前登録', width: 10, isAttendanceStatus: true });
+  }
   // 出席情報列（自動出力・○ or 値）
   for (const item of infoColumns) {
     cols.push({ key: `info:${item}`, label: item, width: 7, isInfo: true });
@@ -274,19 +298,21 @@ async function buildAttendanceListExcel({
       const cell = row.getCell(colIdx + 1);
       cell.font = { name: FONT_NAME, size: 11 };
       cell.border = thinBorder();
-      cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck ? 'center' : 'left', wrapText: false };
+      const center = col.key === '__no' || col.isAttendanceStatus || col.isCheck || col.isInfo;
+      cell.alignment = { vertical: 'middle', horizontal: center ? 'center' : 'left', wrapText: false };
 
-      if (col.key === 'no') cell.value = i + 1;
-      else if (col.key === 'name') cell.value = att.name || '';
-      else if (col.key === 'furigana') cell.value = att.furigana || '';
-      else if (col.key === 'company') cell.value = att.company || '';
-      else if (col.key === 'status') {
-        cell.value = att.status || '';
-        // 事前登録は薄青、出席は薄緑などで分かりやすく
-        const bg = statusFill(att.status);
+      if (col.key === '__no') {
+        cell.value = i + 1;
+      } else if (col.memberField) {
+        const field = col.memberField;
+        let v = (att.member || {})[field] || '';
+        if (field === '氏名' && !v) v = att.fallbackName || '';
+        cell.value = v;
+      } else if (col.isAttendanceStatus) {
+        cell.value = att.attendanceStatus || '';
+        const bg = statusFill(att.attendanceStatus);
         if (bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
       } else if (col.isInfo) {
-        // 出席シートの自由列から取り出し、参加とみなせる値なら ○
         const fieldName = col.key.slice('info:'.length);
         const value = (att.info || {})[fieldName] || '';
         cell.value = toParticipationMark(value);
@@ -294,9 +320,7 @@ async function buildAttendanceListExcel({
           cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: COLOR.eventMarkFg } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.eventMarkBg } };
         }
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
       } else if (col.isCheck) {
-        // チェック欄は空（手書き用）。やや太い罫線で目立たせる
         cell.value = '';
         cell.border = checkBorder();
       }
@@ -326,8 +350,9 @@ async function buildAttendanceListExcel({
         const cell = row.getCell(colIdx + 1);
         cell.font = { name: FONT_NAME, size: 11 };
         cell.border = thinBorder();
-        cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck || col.isInfo ? 'center' : 'left' };
-        if (col.key === 'no') {
+        const center = col.key === '__no' || col.isAttendanceStatus || col.isCheck || col.isInfo;
+        cell.alignment = { vertical: 'middle', horizontal: center ? 'center' : 'left' };
+        if (col.key === '__no') {
           cell.value = walkInStartNo + i;
           cell.font = { name: FONT_NAME, size: 11, color: { argb: 'FF999999' } };
         } else if (col.isCheck || col.isInfo) {

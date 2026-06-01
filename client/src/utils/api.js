@@ -111,8 +111,8 @@ export const api = {
       { method: 'POST', body: JSON.stringify(opts) },
       'attendance-list.xlsx',
     ),
-  getAttendanceInfoColumns: (eventId) =>
-    apiFetch(`/api/events/${eventId}/attendance-info-columns`),
+  getAttendanceListFields: (eventId) =>
+    apiFetch(`/api/events/${eventId}/attendance-list-fields`),
 
   // Form Import
   getFormConfig: (eventId) => apiFetch(`/api/events/${eventId}/form`),

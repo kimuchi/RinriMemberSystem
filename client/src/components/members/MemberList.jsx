@@ -26,6 +26,15 @@ export default function MemberList() {
   // CSVインポート
   const [showCsvImport, setShowCsvImport] = useState(false);
 
+  // Excelエクスポート
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFields, setExportFields] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [selectedCols, setSelectedCols] = useState(new Set());
+  const [selectedEvents, setSelectedEvents] = useState(new Set());
+  const [eventSearch, setEventSearch] = useState('');
+  const [exporting, setExporting] = useState(false);
+
   // イベント参加履歴の表示設定
   const [showEventHistory, setShowEventHistory] = useState(false);
   const [eventStatusFilter, setEventStatusFilter] = useState('');
@@ -83,6 +92,103 @@ export default function MemberList() {
 
   function handleCfFilter(cfId, value) {
     setCfFilters(prev => ({ ...prev, [cfId]: value }));
+  }
+
+  // ---- エクスポート ----
+  async function openExportModal() {
+    setShowExportModal(true);
+    if (exportFields) return;
+    setExportLoading(true);
+    try {
+      const res = await api.getMemberExportFields();
+      setExportFields(res);
+      // デフォルトで基本情報の主要列をチェック
+      const defaultKeys = new Set([
+        'member:氏名', 'member:ふりがな', 'member:会社名',
+        'member:メールアドレス', 'member:入会ステータス',
+      ]);
+      const initial = new Set();
+      [...res.basic, ...res.custom, ...res.extra].forEach(c => {
+        if (defaultKeys.has(c.key)) initial.add(c.key);
+      });
+      setSelectedCols(initial);
+      setSelectedEvents(new Set());
+    } catch (err) {
+      toast.error(err.message);
+      setShowExportModal(false);
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  function toggleExportCol(key) {
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleExportGroup(cols) {
+    const keys = cols.map(c => c.key);
+    const allChecked = keys.length > 0 && keys.every(k => selectedCols.has(k));
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allChecked ? next.delete(k) : next.add(k));
+      return next;
+    });
+  }
+
+  function toggleEvent(eventId) {
+    setSelectedEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  }
+
+  function toggleEventsAll(events) {
+    const ids = events.map(e => e.key.slice('event:'.length));
+    const allChecked = ids.length > 0 && ids.every(id => selectedEvents.has(id));
+    setSelectedEvents(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => allChecked ? next.delete(id) : next.add(id));
+      return next;
+    });
+  }
+
+  async function handleExport() {
+    if (!exportFields) return;
+    if (selectedCols.size === 0 && selectedEvents.size === 0) {
+      toast.warning('1列以上選択してください');
+      return;
+    }
+    // 表示順を保ってカラム配列を構築
+    const memberCols = [...exportFields.basic, ...exportFields.custom, ...exportFields.extra]
+      .filter(c => selectedCols.has(c.key));
+    const eventCols = exportFields.events
+      .filter(e => selectedEvents.has(e.key.slice('event:'.length)))
+      .map(e => ({
+        key: e.key,
+        // 日付付きで分かりやすく
+        label: e.date ? `${e.label}（${e.date.slice(0, 10)}）` : e.label,
+      }));
+    const columns = [...memberCols, ...eventCols];
+
+    setExporting(true);
+    try {
+      // 絞り込み済みの会員IDを順序付きで送信
+      const ids = filtered.map(m => m.id);
+      await api.exportMembers(ids, columns);
+      toast.success(`${ids.length}件をエクスポートしました`);
+      setShowExportModal(false);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setExporting(false);
+    }
   }
 
   // 期間内のイベント一覧を計算
@@ -205,7 +311,11 @@ export default function MemberList() {
           <h1 className="page-title">会員名簿</h1>
           <p className="page-subtitle">{filtered.length}件表示 / {members.length}件中</p>
         </div>
-        <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary" onClick={openExportModal}>
+            <Icon name="download" size={18} />
+            Excelエクスポート
+          </button>
           <button className="btn btn-secondary" onClick={() => setShowCsvImport(true)}>
             <Icon name="upload_file" size={18} />
             CSVインポート
@@ -426,6 +536,129 @@ export default function MemberList() {
           onImported={() => { setShowCsvImport(false); setLoading(true); loadData(); }}
         />
       )}
+
+      {showExportModal && (
+        <div className="modal-overlay" onClick={() => !exporting && setShowExportModal(false)}>
+          <div className="modal-content bulk-modal" onClick={e => e.stopPropagation()} style={{ width: 640, maxWidth: '95vw' }}>
+            <div className="modal-header">
+              <h2>Excelエクスポート</h2>
+              <button className="btn-icon" onClick={() => setShowExportModal(false)} disabled={exporting}>
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ overflowY: 'auto' }}>
+              {exportLoading ? (
+                <div style={{ textAlign: 'center', padding: 'var(--space-lg)' }}><div className="spinner" /></div>
+              ) : !exportFields ? (
+                <p style={{ color: 'var(--color-text-muted)' }}>列情報を取得できませんでした</p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
+                    現在の絞り込み結果 <strong>{filtered.length}件</strong> を、選択した列でエクスポートします。
+                  </p>
+
+                  {/* 会員列の選択 */}
+                  <ExportGroup title="基本情報" cols={exportFields.basic} selectedCols={selectedCols} toggleCol={toggleExportCol} toggleGroup={toggleExportGroup} />
+                  <ExportGroup title="カスタムフィールド" cols={exportFields.custom} selectedCols={selectedCols} toggleCol={toggleExportCol} toggleGroup={toggleExportGroup} />
+                  <ExportGroup title="追加列" cols={exportFields.extra} selectedCols={selectedCols} toggleCol={toggleExportCol} toggleGroup={toggleExportGroup} />
+
+                  {/* イベント列の選択 */}
+                  {exportFields.events.length > 0 && (
+                    <div style={{ marginTop: 'var(--space-md)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+                        <strong>参加イベント（出席列に「○」を出力）</strong>
+                        <input
+                          className="form-input"
+                          placeholder="イベント名で検索..."
+                          value={eventSearch}
+                          onChange={e => setEventSearch(e.target.value)}
+                          style={{ maxWidth: 200, fontSize: 'var(--font-size-sm)', padding: '4px 8px' }}
+                        />
+                      </div>
+                      <EventExportList
+                        events={exportFields.events.filter(e =>
+                          !eventSearch || (e.label || '').toLowerCase().includes(eventSearch.toLowerCase())
+                        )}
+                        selectedEvents={selectedEvents}
+                        toggleEvent={toggleEvent}
+                        toggleEventsAll={toggleEventsAll}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                列{selectedCols.size}件 + イベント{selectedEvents.size}件 選択中
+              </span>
+              <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                <button className="btn btn-secondary" onClick={() => setShowExportModal(false)} disabled={exporting}>
+                  キャンセル
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleExport}
+                  disabled={exporting || exportLoading || (selectedCols.size === 0 && selectedEvents.size === 0)}
+                >
+                  {exporting ? '出力中...' : 'エクスポート'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportGroup({ title, cols, selectedCols, toggleCol, toggleGroup }) {
+  if (!cols || cols.length === 0) return null;
+  const allChecked = cols.every(c => selectedCols.has(c.key));
+  return (
+    <div style={{ marginBottom: 'var(--space-sm)' }}>
+      <label className="bulk-check-item" style={{ fontWeight: 600, background: 'var(--color-bg-secondary)' }}>
+        <input type="checkbox" checked={allChecked} onChange={() => toggleGroup(cols)} />
+        <span>{title}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+          {cols.filter(c => selectedCols.has(c.key)).length} / {cols.length}
+        </span>
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+        {cols.map(c => (
+          <label key={c.key} className="bulk-check-item" style={{ paddingLeft: 'var(--space-lg)' }}>
+            <input type="checkbox" checked={selectedCols.has(c.key)} onChange={() => toggleCol(c.key)} />
+            <span>{c.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EventExportList({ events, selectedEvents, toggleEvent, toggleEventsAll }) {
+  if (events.length === 0) {
+    return <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: 'var(--space-sm)' }}>該当するイベントがありません</p>;
+  }
+  const ids = events.map(e => e.key.slice('event:'.length));
+  const allChecked = ids.every(id => selectedEvents.has(id));
+  return (
+    <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', maxHeight: 320, overflowY: 'auto' }}>
+      <label className="bulk-check-item" style={{ fontWeight: 600, background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border-light)' }}>
+        <input type="checkbox" checked={allChecked} onChange={() => toggleEventsAll(events)} />
+        <span>全て選択（{events.length}件）</span>
+      </label>
+      {events.map(e => {
+        const id = e.key.slice('event:'.length);
+        return (
+          <label key={id} className="bulk-check-item">
+            <input type="checkbox" checked={selectedEvents.has(id)} onChange={() => toggleEvent(id)} />
+            <span style={{ flex: 1 }}>{e.label || '(名称なし)'}</span>
+            {e.type && <span className="badge badge-primary" style={{ fontSize: 'var(--font-size-xs)' }}>{e.type}</span>}
+            {e.date && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{e.date.slice(0, 10)}</span>}
+          </label>
+        );
+      })}
     </div>
   );
 }

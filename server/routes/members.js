@@ -1,4 +1,5 @@
 const express = require('express');
+const XLSX = require('xlsx');
 const sheets = require('../services/sheets');
 const { normalizeFurigana } = require('../utils/normalize');
 const router = express.Router();
@@ -164,6 +165,128 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error('Get members error:', err);
     res.status(500).json({ error: '会員一覧の取得に失敗しました' });
+  }
+});
+
+/**
+ * GET /api/members/export-fields - エクスポート可能な列の一覧
+ * 注意: /:id より前に定義する必要あり
+ */
+router.get('/export-fields', async (req, res) => {
+  try {
+    const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
+    const customFields = await sheets.getCustomFields();
+    const customNames = new Set(customFields.map(cf => cf.name));
+    const basicSet = new Set(Object.values(BASE_FIELDS));
+    const systemSet = new Set(['ID', '登録日', '更新日']);
+
+    const basic = [];
+    const custom = [];
+    const extra = [];
+    for (const h of memberHeaders) {
+      if (systemSet.has(h)) continue;
+      const col = { key: `member:${h}`, label: h };
+      if (customNames.has(h)) custom.push(col);
+      else if (basicSet.has(h)) basic.push(col);
+      else extra.push(col);
+    }
+
+    // 全イベント（日時降順）
+    const { data: events } = await sheets.getSheetData('イベント');
+    const eventCols = events
+      .map(e => ({
+        key: `event:${e['ID']}`,
+        label: e['イベント名'] || '',
+        date: e['日時'] || '',
+        type: e['種類'] || '',
+      }))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    res.json({ basic, custom, extra, events: eventCols });
+  } catch (err) {
+    console.error('Get member export fields error:', err);
+    res.status(500).json({ error: 'エクスポート列の取得に失敗しました' });
+  }
+});
+
+/**
+ * POST /api/members/export - 会員名簿をExcel(xlsx)としてエクスポート
+ * body: {
+ *   memberIds?: string[],   // 指定があればその順序・絞り込みでエクスポート
+ *   columns: [{ key, label }]
+ * }
+ */
+router.post('/export', async (req, res) => {
+  try {
+    const { columns, memberIds } = req.body;
+    if (!Array.isArray(columns) || columns.length === 0) {
+      return res.status(400).json({ error: '出力する列を選択してください' });
+    }
+
+    const { data: members } = await sheets.getSheetData('会員名簿');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+
+    const memberById = {};
+    members.forEach(m => { memberById[m['ID']] = m; });
+
+    // memberIds 指定があればその順序を保つ、なければふりがな順
+    let target;
+    if (Array.isArray(memberIds) && memberIds.length > 0) {
+      target = memberIds.map(id => memberById[id]).filter(Boolean);
+    } else {
+      target = [...members].sort(
+        (a, b) => (a['ふりがな'] || '').localeCompare(b['ふりがな'] || '', 'ja')
+      );
+    }
+
+    // 出席ルックアップ: memberId → eventId → 出席状態
+    const attBy = {};
+    attendance.forEach(a => {
+      const mid = a['会員ID'];
+      const eid = a['イベントID'];
+      if (!mid || !eid) return;
+      if (!attBy[mid]) attBy[mid] = {};
+      attBy[mid][eid] = a['出席状態'];
+    });
+
+    const headerRow = columns.map(c => c.label || '');
+    const dataRows = target.map(m => columns.map(col => {
+      const sep = col.key.indexOf(':');
+      if (sep < 0) return '';
+      const source = col.key.slice(0, sep);
+      const field = col.key.slice(sep + 1);
+      if (source === 'member') {
+        return m[field] || '';
+      }
+      if (source === 'event') {
+        const status = attBy[m['ID']]?.[field];
+        // 「参加」= 出席 または 遅刻
+        return (status === '出席' || status === '遅刻') ? '○' : '';
+      }
+      return '';
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    XLSX.utils.book_append_sheet(wb, ws, '会員名簿');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const filename = `会員名簿_${dateStr}.xlsx`;
+    const encoded = encodeURIComponent(filename);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="members.xlsx"; filename*=UTF-8''${encoded}`
+    );
+    res.send(buffer);
+  } catch (err) {
+    console.error('Member export error:', err);
+    res.status(500).json({ error: err.message || 'エクスポートに失敗しました' });
   }
 });
 

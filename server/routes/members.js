@@ -227,13 +227,20 @@ router.post('/export', async (req, res) => {
       { data: members },
       { data: attendance },
       { data: statusOptions },
+      { data: events },
       dashboardCards,
     ] = await Promise.all([
       sheets.getSheetData('会員名簿'),
       sheets.getSheetData('イベント出席'),
       sheets.getSheetData('入会ステータス選択肢'),
+      sheets.getSheetData('イベント'),
       sheets.getDashboardCards(),
     ]);
+
+    // イベント日時マップ（未来/過去判定 + 古い順ソート用）
+    const eventDateMap = {};
+    events.forEach(e => { eventDateMap[e['ID']] = e['日時'] || ''; });
+    const now = new Date();
 
     // 入会ステータスの表示順マップ
     const statusOrder = {};
@@ -268,15 +275,30 @@ router.post('/export', async (req, res) => {
       attBy[mid][eid] = a['出席状態'];
     });
 
-    // 入会ステータス列を判定（自動的に色分け対象とする）
-    const columnsWithMeta = columns.map(c => {
+    // イベント列のみ抽出して日時昇順（古い→新しい）に並べ替え、会員列の後ろに付ける
+    const memberCols = columns.filter(c => !(c.key && c.key.startsWith('event:')));
+    const eventCols = columns
+      .filter(c => c.key && c.key.startsWith('event:'))
+      .slice()
+      .sort((a, b) => {
+        const aDate = eventDateMap[a.key.slice('event:'.length)] || '';
+        const bDate = eventDateMap[b.key.slice('event:'.length)] || '';
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return 1;  // 日時不明は最後
+        if (!bDate) return -1;
+        return aDate.localeCompare(bDate);
+      });
+    const orderedColumns = [...memberCols, ...eventCols];
+
+    // 入会ステータス列・イベント列を判定（スタイル用メタ）
+    const columnsWithMeta = orderedColumns.map(c => {
       const meta = { label: c.label || '', key: c.key };
       if (c.key && c.key.startsWith('event:')) meta.isEventColumn = true;
       if (c.key === 'member:入会ステータス') meta.isStatusColumn = true;
       return meta;
     });
 
-    const rows = target.map(m => columns.map(col => {
+    const rows = target.map(m => orderedColumns.map(col => {
       const sep = col.key.indexOf(':');
       if (sep < 0) return '';
       const source = col.key.slice(0, sep);
@@ -286,7 +308,16 @@ router.post('/export', async (req, res) => {
       }
       if (source === 'event') {
         const status = attBy[m['ID']]?.[field];
-        return (status === '出席' || status === '遅刻') ? '○' : '';
+        if (!status) return '';
+        // 過去イベント: 実際に参加した人 (出席/遅刻) のみ ○
+        // 将来イベント: 開催前のため、事前登録も「参加予定」として ○
+        if (status === '出席' || status === '遅刻') return '○';
+        const eventDate = eventDateMap[field];
+        if (eventDate) {
+          const d = new Date(eventDate);
+          if (!isNaN(d.getTime()) && d > now && status === '事前登録') return '○';
+        }
+        return '';
       }
       return '';
     }));

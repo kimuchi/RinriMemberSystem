@@ -1,7 +1,7 @@
 const express = require('express');
-const XLSX = require('xlsx');
 const sheets = require('../services/sheets');
 const { normalizeFurigana } = require('../utils/normalize');
+const { buildExcelBuffer, buildStatusColorMap } = require('../utils/excel-export');
 const router = express.Router();
 
 // 基本フィールドの定義（APIキー → シート列名）
@@ -223,21 +223,40 @@ router.post('/export', async (req, res) => {
       return res.status(400).json({ error: '出力する列を選択してください' });
     }
 
-    const { data: members } = await sheets.getSheetData('会員名簿');
-    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const [
+      { data: members },
+      { data: attendance },
+      { data: statusOptions },
+      dashboardCards,
+    ] = await Promise.all([
+      sheets.getSheetData('会員名簿'),
+      sheets.getSheetData('イベント出席'),
+      sheets.getSheetData('入会ステータス選択肢'),
+      sheets.getDashboardCards(),
+    ]);
 
-    const memberById = {};
-    members.forEach(m => { memberById[m['ID']] = m; });
+    // 入会ステータスの表示順マップ
+    const statusOrder = {};
+    [...statusOptions]
+      .sort((a, b) => (parseInt(a['表示順']) || 99) - (parseInt(b['表示順']) || 99))
+      .forEach((s, idx) => { statusOrder[s['選択肢名']] = idx; });
 
-    // memberIds 指定があればその順序を保つ、なければふりがな順
+    // 絞り込み（memberIds が指定されていれば、そのIDの集合に限定）
     let target;
     if (Array.isArray(memberIds) && memberIds.length > 0) {
-      target = memberIds.map(id => memberById[id]).filter(Boolean);
+      const idSet = new Set(memberIds);
+      target = members.filter(m => idSet.has(m['ID']));
     } else {
-      target = [...members].sort(
-        (a, b) => (a['ふりがな'] || '').localeCompare(b['ふりがな'] || '', 'ja')
-      );
+      target = [...members];
     }
+
+    // 入会ステータスの表示順 → ふりがな の順でソート
+    target.sort((a, b) => {
+      const ao = statusOrder[a['入会ステータス']] ?? 9999;
+      const bo = statusOrder[b['入会ステータス']] ?? 9999;
+      if (ao !== bo) return ao - bo;
+      return (a['ふりがな'] || '').localeCompare(b['ふりがな'] || '', 'ja');
+    });
 
     // 出席ルックアップ: memberId → eventId → 出席状態
     const attBy = {};
@@ -249,8 +268,15 @@ router.post('/export', async (req, res) => {
       attBy[mid][eid] = a['出席状態'];
     });
 
-    const headerRow = columns.map(c => c.label || '');
-    const dataRows = target.map(m => columns.map(col => {
+    // 入会ステータス列を判定（自動的に色分け対象とする）
+    const columnsWithMeta = columns.map(c => {
+      const meta = { label: c.label || '', key: c.key };
+      if (c.key && c.key.startsWith('event:')) meta.isEventColumn = true;
+      if (c.key === 'member:入会ステータス') meta.isStatusColumn = true;
+      return meta;
+    });
+
+    const rows = target.map(m => columns.map(col => {
       const sep = col.key.indexOf(':');
       if (sep < 0) return '';
       const source = col.key.slice(0, sep);
@@ -260,16 +286,18 @@ router.post('/export', async (req, res) => {
       }
       if (source === 'event') {
         const status = attBy[m['ID']]?.[field];
-        // 「参加」= 出席 または 遅刻
         return (status === '出席' || status === '遅刻') ? '○' : '';
       }
       return '';
     }));
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
-    XLSX.utils.book_append_sheet(wb, ws, '会員名簿');
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const statusColorMap = buildStatusColorMap(dashboardCards);
+    const buffer = await buildExcelBuffer({
+      sheetName: '会員名簿',
+      columns: columnsWithMeta,
+      rows,
+      statusColorMap,
+    });
 
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const filename = `会員名簿_${dateStr}.xlsx`;

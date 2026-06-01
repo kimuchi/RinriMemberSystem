@@ -652,6 +652,7 @@ function StatusSettings() {
   const [statuses, setStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
+  const [reordering, setReordering] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -689,19 +690,95 @@ function StatusSettings() {
     }
   }
 
+  // 並べ替え: oldIdx の項目を newIdx の位置に移動し、全項目の順番を 1〜N に振り直す
+  async function reorderTo(oldIdx, newIdx) {
+    if (oldIdx === newIdx || newIdx < 0 || newIdx >= statuses.length) return;
+    const reordered = [...statuses];
+    const [moved] = reordered.splice(oldIdx, 1);
+    reordered.splice(newIdx, 0, moved);
+    setReordering(true);
+    try {
+      // 表示順が変わる項目のみ更新
+      await Promise.all(reordered.map((s, i) => {
+        const newOrder = String(i + 1);
+        if (s.order === newOrder) return null;
+        return api.updateStatus(s._rowIndex, { order: newOrder });
+      }).filter(Boolean));
+      // 楽観的にUIを先に更新
+      setStatuses(reordered.map((s, i) => ({ ...s, order: String(i + 1) })));
+    } catch (err) {
+      toast.error(err.message);
+      load();
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  // ドラッグ&ドロップ用
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+
+  function handleDragStart(idx) { setDragIdx(idx); }
+  function handleDragOver(e, idx) {
+    e.preventDefault();
+    if (dragIdx === null) return;
+    if (overIdx !== idx) setOverIdx(idx);
+  }
+  function handleDragEnd() {
+    if (dragIdx !== null && overIdx !== null && dragIdx !== overIdx) {
+      reorderTo(dragIdx, overIdx);
+    }
+    setDragIdx(null);
+    setOverIdx(null);
+  }
+
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}><div className="spinner" /></div>;
 
   return (
     <div className="card">
       <div className="card-header"><h2 className="settings-section-title">入会ステータス選択肢</h2></div>
       <div className="card-body">
-        <p className="settings-help">会員名簿の「入会ステータス」ドロップダウンに表示される選択肢を管理します。</p>
+        <p className="settings-help">
+          会員名簿の「入会ステータス」ドロップダウンに表示される選択肢を管理します。<br />
+          並べ替えは <Icon name="drag_indicator" size={14} /> をドラッグするか、▲▼ボタンで操作できます。会員一覧やダッシュボード、エクスポートの並び順にも反映されます。
+        </p>
         <div className="option-list">
           {statuses.map((s, i) => (
-            <div key={i} className="option-item">
+            <div
+              key={s._rowIndex}
+              className={`option-item ${overIdx === i && dragIdx !== null ? 'option-drop-target' : ''} ${dragIdx === i ? 'option-dragging' : ''}`}
+              draggable={!reordering}
+              onDragStart={() => handleDragStart(i)}
+              onDragOver={e => handleDragOver(e, i)}
+              onDragEnd={handleDragEnd}
+              onDrop={handleDragEnd}
+            >
+              <span className="option-drag-handle" title="ドラッグして並べ替え">
+                <Icon name="drag_indicator" size={16} />
+              </span>
               <span className="option-order">{s.order}</span>
               <span className="option-name">{s.name}</span>
-              <button className="btn-icon" onClick={() => handleDelete(s)}><Icon name="close" size={16} /></button>
+              <div className="option-reorder-buttons">
+                <button
+                  className="btn-icon"
+                  onClick={() => reorderTo(i, i - 1)}
+                  disabled={reordering || i === 0}
+                  title="上へ"
+                >
+                  <Icon name="arrow_upward" size={14} />
+                </button>
+                <button
+                  className="btn-icon"
+                  onClick={() => reorderTo(i, i + 1)}
+                  disabled={reordering || i === statuses.length - 1}
+                  title="下へ"
+                >
+                  <Icon name="arrow_downward" size={14} />
+                </button>
+              </div>
+              <button className="btn-icon" onClick={() => handleDelete(s)} disabled={reordering}>
+                <Icon name="close" size={16} />
+              </button>
             </div>
           ))}
         </div>

@@ -1,6 +1,6 @@
 const express = require('express');
-const XLSX = require('xlsx');
 const sheets = require('../services/sheets');
+const { buildExcelBuffer, buildStatusColorMap } = require('../utils/excel-export');
 const formImportRouter = require('./form-import');
 const router = express.Router();
 
@@ -348,7 +348,6 @@ router.post('/:id/export', async (req, res) => {
       .map(a => ({ att: a, member: memberById[a['会員ID']] || {} }))
       .sort((a, b) => (a.member['ふりがな'] || '').localeCompare(b.member['ふりがな'] || '', 'ja'));
 
-    const headerRow = columns.map(c => c.label || '');
     const dataRows = rows.map(({ att, member }) => columns.map(col => {
       const sep = col.key.indexOf(':');
       if (sep < 0) return '';
@@ -365,10 +364,18 @@ router.post('/:id/export', async (req, res) => {
       return '';
     }));
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
-    XLSX.utils.book_append_sheet(wb, ws, '出席者一覧');
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const columnsWithMeta = columns.map(c => ({
+      label: c.label || '',
+      key: c.key,
+      isStatusColumn: c.key === 'member:入会ステータス',
+    }));
+    const dashboardCards = await sheets.getDashboardCards();
+    const buffer = await buildExcelBuffer({
+      sheetName: '出席者一覧',
+      columns: columnsWithMeta,
+      rows: dataRows,
+      statusColorMap: buildStatusColorMap(dashboardCards),
+    });
 
     // ファイル名（イベント名_出席者_YYYYMMDD.xlsx）
     const safeName = (event['イベント名'] || 'event').replace(/[\\/:*?"<>|]/g, '_');

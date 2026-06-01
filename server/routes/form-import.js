@@ -15,6 +15,26 @@ const MEMBER_SYSTEM_COLUMNS = new Set([
   'ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
   '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
 ]);
+const ATTENDANCE_BASE_COLUMNS = new Set([
+  'ID', 'イベントID', '会員ID', '氏名', '出席状態', '備考',
+]);
+
+/**
+ * fieldMap の値を { kind, column } にパース
+ * 例: "member:氏名" / "attendance:懇親会"
+ * 後方互換: プレフィックスなしの値は会員名簿列とみなす
+ */
+function parseMapTarget(value) {
+  if (!value) return null;
+  const idx = value.indexOf(':');
+  if (idx < 0) return { kind: 'member', column: value };
+  const kind = value.slice(0, idx);
+  const column = value.slice(idx + 1);
+  if (kind !== 'member' && kind !== 'attendance') {
+    return { kind: 'member', column: value }; // 不明 prefix は member 扱い
+  }
+  return { kind, column };
+}
 
 /**
  * スプレッドシートURLまたはIDからスプレッドシートIDを抽出
@@ -81,6 +101,8 @@ router.post('/connect', async (req, res) => {
 
     // 会員名簿のヘッダーも返す（マッピング先候補）
     const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
+    // イベント出席シートの自由列も返す
+    const attendanceFields = await sheets.getAttendanceExtraColumns();
 
     res.json({
       spreadsheetId,
@@ -88,6 +110,7 @@ router.post('/connect', async (req, res) => {
       selectedSheet: targetSheet,
       formHeaders: headers,
       memberFields: memberHeaders.filter(h => h !== 'ID' && h !== '登録日' && h !== '更新日'),
+      attendanceFields,
     });
   } catch (err) {
     console.error('Form connect error:', err);
@@ -105,12 +128,18 @@ router.post('/connect', async (req, res) => {
 router.put('/mapping', async (req, res) => {
   try {
     await ensureConfigSheet();
-    const { spreadsheetId, sheetName, mapping, newColumns } = req.body;
+    const {
+      spreadsheetId,
+      sheetName,
+      mapping,
+      newColumns,
+      newAttendanceColumns,
+    } = req.body;
     if (!spreadsheetId || !sheetName) {
       return res.status(400).json({ error: 'スプレッドシートIDとシート名は必須です' });
     }
 
-    // 新規列を会員名簿に追加（マッピング保存より前に実行）
+    // 新規列を会員名簿に追加
     const addedColumns = [];
     if (Array.isArray(newColumns) && newColumns.length > 0) {
       const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
@@ -123,6 +152,22 @@ router.put('/mapping', async (req, res) => {
         await sheets.addColumnToSheet('会員名簿', name);
         existingSet.add(name);
         addedColumns.push(name);
+      }
+    }
+
+    // 新規列をイベント出席シートに追加
+    const addedAttendanceColumns = [];
+    if (Array.isArray(newAttendanceColumns) && newAttendanceColumns.length > 0) {
+      const { headers: attHeaders } = await sheets.getSheetData('イベント出席');
+      const existingSet = new Set(attHeaders);
+      for (const raw of newAttendanceColumns) {
+        const name = (raw || '').trim();
+        if (!name) continue;
+        if (ATTENDANCE_BASE_COLUMNS.has(name)) continue;
+        if (existingSet.has(name)) continue;
+        await sheets.addColumnToSheet('イベント出席', name);
+        existingSet.add(name);
+        addedAttendanceColumns.push(name);
       }
     }
 
@@ -145,7 +190,7 @@ router.put('/mapping', async (req, res) => {
       });
     }
 
-    res.json({ success: true, addedColumns });
+    res.json({ success: true, addedColumns, addedAttendanceColumns });
   } catch (err) {
     console.error('Save mapping error:', err);
     res.status(500).json({ error: 'マッピングの保存に失敗しました' });
@@ -232,23 +277,26 @@ router.post('/preview', async (req, res) => {
       // 名前で会員を検索
       const member = memberByName[normalizedFormName];
 
-      // フォームデータを会員フィールドにマッピング
-      const mappedFormData = {};
-      for (const [formCol, memberCol] of Object.entries(fieldMap)) {
+      // フォームデータを会員/出席フィールドにマッピング
+      const mappedFormData = {};         // 会員名簿に書き込む値
+      const mappedAttendanceData = {};   // イベント出席シートに書き込む値
+      for (const [formCol, rawTarget] of Object.entries(fieldMap)) {
         if (formCol === nameField) continue; // 名前は別扱い
-        if (memberCol && row[formCol]) {
-          let value = row[formCol];
-          // 氏名・ふりがなフィールドの正規化
-          if (memberCol === '氏名') {
-            value = normalizeName(value);
-          } else if (memberCol === 'ふりがな') {
+        if (!rawTarget || !row[formCol]) continue;
+        const target = parseMapTarget(rawTarget);
+        if (!target) continue;
+        let value = row[formCol];
+        if (target.kind === 'member') {
+          if (target.column === '氏名' || target.column === 'ふりがな') {
             value = normalizeName(value);
           }
-          mappedFormData[memberCol] = value;
+          mappedFormData[target.column] = value;
+        } else if (target.kind === 'attendance') {
+          mappedAttendanceData[target.column] = value;
         }
       }
 
-      // 差分検出
+      // 差分検出（会員名簿のみ。出席シートは新規登録扱い）
       const diffs = [];
       if (member) {
         for (const [field, formValue] of Object.entries(mappedFormData)) {
@@ -291,6 +339,7 @@ router.post('/preview', async (req, res) => {
         duplicateGroup,
         diffs,
         mappedFormData,
+        mappedAttendanceData,
       });
     }
 
@@ -316,8 +365,12 @@ router.post('/preview', async (req, res) => {
 /**
  * POST /form/execute - 取り込み実行
  * body: {
- *   entries: [{ memberId, memberName, participationType, updates: { field: value } }],
- *   newMembers: [{ name, participationType, fields: { memberCol: value } }]
+ *   entries: [{
+ *     memberId, memberName, participationType,
+ *     updates: { field: value },           // 会員名簿の差分更新
+ *     attendanceData: { field: value },    // イベント出席シートの自由列
+ *   }],
+ *   newMembers: [{ name, participationType, fields, attendanceData }]
  * }
  */
 router.post('/execute', async (req, res) => {
@@ -332,31 +385,60 @@ router.post('/execute', async (req, res) => {
     let updatedCount = 0;
     let newMemberCount = 0;
     let skippedCount = 0;
+    let attendanceColumnUpdatedCount = 0;
 
-    // 既登録の出席データを取得（二重登録防止）
+    // 既登録の出席データを取得（二重登録防止 + 既登録行への列更新用）
     const { data: existingAttendance } = await sheets.getSheetData('イベント出席');
-    const alreadyRegistered = new Set(
-      existingAttendance.filter(a => a['イベントID'] === eventId).map(a => a['会員ID'])
-    );
+    const existingByMember = {};
+    existingAttendance.forEach(a => {
+      if (a['イベントID'] === eventId && a['会員ID']) {
+        existingByMember[a['会員ID']] = a;
+      }
+    });
+    const alreadyRegistered = new Set(Object.keys(existingByMember));
 
     // ---- 1) 出席行をまとめて収集 ----
     const attendanceRows = [];
+    // 既登録会員に対する出席シートの列更新（updateCellで個別）
+    const attendanceColUpdates = []; // [{ rowIndex, field, value }]
 
     // 既存会員の出席登録（行データの収集のみ）
     for (const entry of (entries || [])) {
+      const hasAttData = entry.attendanceData && Object.keys(entry.attendanceData).length > 0;
       if (alreadyRegistered.has(entry.memberId)) {
         skippedCount++;
+        // 既登録だが出席シートの自由列に新情報がある場合は更新
+        if (hasAttData) {
+          const row = existingByMember[entry.memberId];
+          for (const [field, value] of Object.entries(entry.attendanceData)) {
+            if ((row[field] || '') !== String(value)) {
+              attendanceColUpdates.push({ rowIndex: row._rowIndex, field, value });
+            }
+          }
+        }
       } else {
-        attendanceRows.push({
+        const newAttRow = {
           'ID': sheets.generateId(),
           'イベントID': eventId,
           '会員ID': entry.memberId,
           '氏名': entry.memberName,
           '出席状態': '事前登録',
           '備考': entry.participationType || '',
-        });
+          ...(entry.attendanceData || {}),
+        };
+        attendanceRows.push(newAttRow);
         alreadyRegistered.add(entry.memberId);
         registeredCount++;
+      }
+    }
+
+    // 既登録会員の出席シート自由列を更新
+    for (const u of attendanceColUpdates) {
+      try {
+        await sheets.updateCell('イベント出席', u.rowIndex, u.field, u.value);
+        attendanceColumnUpdatedCount++;
+      } catch (err) {
+        console.error('Attendance column update error:', err);
       }
     }
 
@@ -404,6 +486,7 @@ router.post('/execute', async (req, res) => {
         '氏名': nm.name || '',
         '出席状態': '事前登録',
         '備考': nm.participationType || '',
+        ...(nm.attendanceData || {}),
       });
       newMemberCount++;
       registeredCount++;
@@ -418,7 +501,14 @@ router.post('/execute', async (req, res) => {
       await sheets.appendRows('イベント出席', allAttendanceRows);
     }
 
-    res.json({ success: true, registeredCount, updatedCount, newMemberCount, skippedCount });
+    res.json({
+      success: true,
+      registeredCount,
+      updatedCount,
+      newMemberCount,
+      skippedCount,
+      attendanceColumnUpdatedCount,
+    });
   } catch (err) {
     console.error('Form execute error:', err);
     res.status(500).json({ error: '取り込みに失敗しました' });

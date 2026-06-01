@@ -73,13 +73,13 @@ export default function FormImport({ eventId, onImported }) {
       const res = await api.connectForm(eventId, spreadsheetInput, '');
       setConnectResult(res);
       setSelectedSheet(res.selectedSheet);
-      // 初期マッピングを推測
+      // 初期マッピングを推測（会員列のみ）
       const autoMap = {};
       const autoName = guessNameField(res.formHeaders);
       setNameField(autoName);
       for (const fh of res.formHeaders) {
         const match = res.memberFields.find(mf => fh.includes(mf) || mf.includes(fh));
-        if (match) autoMap[fh] = match;
+        if (match) autoMap[fh] = `member:${match}`;
       }
       setFieldMap(autoMap);
       setStep('mapping');
@@ -120,19 +120,26 @@ export default function FormImport({ eventId, onImported }) {
       toast.warning('氏名に対応するフォーム列を選択してください');
       return;
     }
-    // 新規列（既存の会員フィールドに含まれない値）を抽出
+    // 既存の会員/出席フィールドのセット
     const memberFieldsSet = new Set(connectResult?.memberFields || []);
-    const newColumns = Array.from(new Set(
-      Object.values(fieldMap)
-        .map(v => (v || '').trim())
-        .filter(v => v && !memberFieldsSet.has(v))
-    ));
-    // 名前未入力の新規列を検出
-    const hasBlankNewColumn = Object.entries(fieldMap).some(([fh, v]) => {
-      const trimmed = (v || '').trim();
-      return v && !trimmed; // 値はあるが trim 後に空（スペースのみ等）
-    });
-    if (hasBlankNewColumn) {
+    const attendanceFieldsSet = new Set(connectResult?.attendanceFields || []);
+
+    // fieldMap の値（会員/出席で分けて新規列を抽出）
+    const newColumns = new Set();           // 新規会員名簿列
+    const newAttendanceColumns = new Set(); // 新規イベント出席列
+    let hasBlank = false;
+    for (const [fh, raw] of Object.entries(fieldMap)) {
+      if (!raw) continue;
+      const parsed = parseMapValue(raw);
+      const name = (parsed.column || '').trim();
+      if (!name) { hasBlank = true; continue; }
+      if (parsed.kind === 'member' && !memberFieldsSet.has(name)) {
+        newColumns.add(name);
+      } else if (parsed.kind === 'attendance' && !attendanceFieldsSet.has(name)) {
+        newAttendanceColumns.add(name);
+      }
+    }
+    if (hasBlank) {
       toast.warning('新規列名が未入力の項目があります');
       return;
     }
@@ -148,19 +155,32 @@ export default function FormImport({ eventId, onImported }) {
           participationField: participationField || null,
           skipValues: skipArr.length > 0 ? skipArr : null,
         },
-        newColumns,
+        newColumns: Array.from(newColumns),
+        newAttendanceColumns: Array.from(newAttendanceColumns),
       });
-      if (res.addedColumns && res.addedColumns.length > 0) {
-        toast.success(`マッピングを保存しました（新規列${res.addedColumns.length}件を追加）`);
-      } else {
-        toast.success('マッピングを保存しました');
-      }
+      const added = (res.addedColumns?.length || 0) + (res.addedAttendanceColumns?.length || 0);
+      toast.success(added > 0 ? `マッピングを保存しました（新規列${added}件を追加）` : 'マッピングを保存しました');
       await loadConfig();
     } catch (err) {
       toast.error(err.message);
     } finally {
       setSaving(false);
     }
+  }
+
+  // fieldMap の値をパース（"member:列" / "attendance:列" / 旧形式: 列名のみ）
+  function parseMapValue(v) {
+    if (!v) return { kind: 'member', column: '' };
+    const idx = v.indexOf(':');
+    if (idx < 0) return { kind: 'member', column: v };
+    const kind = v.slice(0, idx);
+    const column = v.slice(idx + 1);
+    if (kind !== 'member' && kind !== 'attendance') return { kind: 'member', column: v };
+    return { kind, column };
+  }
+
+  function buildMapValue(kind, column) {
+    return `${kind}:${column}`;
   }
 
   // --- プレビュー ---
@@ -275,6 +295,7 @@ export default function FormImport({ eventId, onImported }) {
           memberName: e.memberName,
           participationType: e.participationType,
           updates,
+          attendanceData: e.mappedAttendanceData || {},
         };
       });
 
@@ -287,6 +308,7 @@ export default function FormImport({ eventId, onImported }) {
           name,
           participationType: e.participationType,
           fields,
+          attendanceData: e.mappedAttendanceData || {},
         };
       });
 
@@ -295,6 +317,7 @@ export default function FormImport({ eventId, onImported }) {
       if (res.registeredCount > 0) msgs.push(`${res.registeredCount}名の出席を登録`);
       if (res.newMemberCount > 0) msgs.push(`${res.newMemberCount}名を名簿に追加`);
       if (res.updatedCount > 0) msgs.push(`${res.updatedCount}名の情報を更新`);
+      if (res.attendanceColumnUpdatedCount > 0) msgs.push(`既登録${res.attendanceColumnUpdatedCount}件に出席情報を反映`);
       toast.success(msgs.join('、') + 'しました');
       setStep('ready');
       setPreview(null);
@@ -411,7 +434,7 @@ export default function FormImport({ eventId, onImported }) {
   // --- マッピング設定 ---
   function renderMapping() {
     if (!connectResult) return null;
-    const { formHeaders, memberFields, sheetNames } = connectResult;
+    const { formHeaders, memberFields, sheetNames, attendanceFields = [] } = connectResult;
 
     return (
       <div className="form-mapping">
@@ -436,40 +459,69 @@ export default function FormImport({ eventId, onImported }) {
 
         {/* フィールドマッピング */}
         <div className="form-group">
-          <label className="form-label">フィールド対応（フォーム列 → 会員名簿の列）</label>
+          <label className="form-label">フィールド対応（フォーム列 → 会員名簿 または イベント出席シートの列）</label>
           <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-sm)' }}>
-            既存の列にない項目は「+ 新規列として追加」を選ぶと、保存時に会員名簿シートへ列が追加されます。
+            <strong>会員情報</strong>（氏名/会社名など、人に紐づく情報）は「会員名簿」へ、
+            <strong>このイベント限定の情報</strong>（懇親会出欠など）は「イベント出席」へ振り分けます。
+            既存にない項目は「新規列として追加」を選んで列名を入力すると、保存時にシートへ列が追加されます。
           </p>
           <div className="mapping-table">
             {formHeaders.filter(h => h !== nameField).map(fh => {
               const current = fieldMap[fh] || '';
-              const isNew = !!current && !memberFields.includes(current);
+              const parsed = parseMapValue(current);
+              const existingMemberSet = new Set(memberFields);
+              const existingAttSet = new Set(attendanceFields || []);
+              const isExistingMember = parsed.column && parsed.kind === 'member' && existingMemberSet.has(parsed.column);
+              const isExistingAtt = parsed.column && parsed.kind === 'attendance' && existingAttSet.has(parsed.column);
+              const isNewMember = parsed.column && parsed.kind === 'member' && !isExistingMember;
+              const isNewAtt = parsed.column && parsed.kind === 'attendance' && !isExistingAtt;
+              // セレクト値（既存ならフル値、新規ならセンチネル）
+              let selectValue = '';
+              if (!current) selectValue = '';
+              else if (isExistingMember || isExistingAtt) selectValue = current;
+              else if (isNewMember) selectValue = '__new_member__';
+              else if (isNewAtt) selectValue = '__new_attendance__';
+
               return (
                 <div key={fh} className="mapping-row">
                   <span className="mapping-form-col">{fh}</span>
                   <Icon name="arrow_forward" size={16} style={{ color: 'var(--color-text-muted)' }} />
                   <select
                     className="form-select mapping-member-col"
-                    value={isNew ? '__new__' : current}
+                    value={selectValue}
                     onChange={e => {
                       const v = e.target.value;
-                      if (v === '__new__') {
-                        setFieldMap(prev => ({ ...prev, [fh]: fh }));
+                      if (v === '__new_member__') {
+                        setFieldMap(prev => ({ ...prev, [fh]: buildMapValue('member', fh) }));
+                      } else if (v === '__new_attendance__') {
+                        setFieldMap(prev => ({ ...prev, [fh]: buildMapValue('attendance', fh) }));
                       } else {
                         setFieldMap(prev => ({ ...prev, [fh]: v }));
                       }
                     }}
                   >
                     <option value="">（スキップ）</option>
-                    {memberFields.map(mf => <option key={mf} value={mf}>{mf}</option>)}
-                    <option value="__new__">+ 新規列として追加...</option>
+                    <optgroup label="会員名簿">
+                      {memberFields.map(mf => (
+                        <option key={`m:${mf}`} value={buildMapValue('member', mf)}>{mf}</option>
+                      ))}
+                    </optgroup>
+                    {(attendanceFields || []).length > 0 && (
+                      <optgroup label="イベント出席シート">
+                        {attendanceFields.map(af => (
+                          <option key={`a:${af}`} value={buildMapValue('attendance', af)}>{af}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="__new_member__">+ 新規列として追加（会員名簿）...</option>
+                    <option value="__new_attendance__">+ 新規列として追加（イベント出席）...</option>
                   </select>
-                  {isNew && (
+                  {(isNewMember || isNewAtt) && (
                     <input
                       className="form-input mapping-new-col"
-                      value={current}
-                      onChange={e => setFieldMap(prev => ({ ...prev, [fh]: e.target.value }))}
-                      placeholder="新規列名"
+                      value={parsed.column}
+                      onChange={e => setFieldMap(prev => ({ ...prev, [fh]: buildMapValue(parsed.kind, e.target.value) }))}
+                      placeholder={isNewAtt ? '新規出席列名' : '新規会員列名'}
                     />
                   )}
                 </div>

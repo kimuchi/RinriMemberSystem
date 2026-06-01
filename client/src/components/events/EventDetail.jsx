@@ -41,6 +41,8 @@ export default function EventDetail() {
   const [listWalkInRows, setListWalkInRows] = useState(10);
   const [listIncludeCompany, setListIncludeCompany] = useState(true);
   const [listLoading, setListLoading] = useState(false);
+  const [listInfoCols, setListInfoCols] = useState([]);       // 利用可能な出席情報列
+  const [listSelectedInfo, setListSelectedInfo] = useState(new Set());
 
   useEffect(() => { loadData(); }, [id]);
 
@@ -241,13 +243,28 @@ export default function EventDetail() {
   // 受付用 出席登録リスト
   async function openListModal() {
     setShowListModal(true);
-    // 既定のチェック項目を取得
+    // 既定のチェック項目 & 利用可能な出席情報列を取得
     try {
-      const gen = await api.getGeneral();
+      const [gen, info] = await Promise.all([
+        api.getGeneral(),
+        api.getAttendanceInfoColumns(id),
+      ]);
       setListCheckItems(gen.attendanceCheckItems || '');
+      setListInfoCols(info.columns || []);
+      // デフォルトで全部チェック
+      setListSelectedInfo(new Set(info.columns || []));
     } catch (err) {
-      // 失敗しても空のまま続行
+      // 失敗しても続行
     }
+  }
+
+  function toggleInfoCol(col) {
+    setListSelectedInfo(prev => {
+      const next = new Set(prev);
+      if (next.has(col)) next.delete(col);
+      else next.add(col);
+      return next;
+    });
   }
 
   async function handleListExport() {
@@ -259,6 +276,7 @@ export default function EventDetail() {
     try {
       await api.exportEventAttendanceList(id, {
         checkItems: items,
+        infoColumns: Array.from(listSelectedInfo),
         walkInRows: Number(listWalkInRows) || 0,
         includeCompany: listIncludeCompany,
       });
@@ -590,8 +608,29 @@ export default function EventDetail() {
                 事前登録者{attendance.length}名 ＋ ドタ参加用の空欄行を含みます。
               </p>
 
+              {listInfoCols.length > 0 && (
+                <div className="form-group">
+                  <label className="form-label">自動出力する出席情報列（フォーム取込済みの情報）</label>
+                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-xs)' }}>
+                    フォーム取込で記録した懇親会出欠などを ○ で表示します（不参加/欠席/なし などは空欄）。
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
+                    {listInfoCols.map(col => (
+                      <label key={col} className="bulk-check-item" style={{ padding: '4px 8px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                        <input
+                          type="checkbox"
+                          checked={listSelectedInfo.has(col)}
+                          onChange={() => toggleInfoCol(col)}
+                        />
+                        <span>{col}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="form-group">
-                <label className="form-label">参加チェック項目（カンマ区切り）</label>
+                <label className="form-label">参加チェック項目（カンマ区切り・手書き用）</label>
                 <input
                   className="form-input"
                   value={listCheckItems}
@@ -599,7 +638,7 @@ export default function EventDetail() {
                   placeholder="例: 朝礼, MS, 朝食会"
                 />
                 <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                  各項目が手書きチェック用の列になります（空欄なら印刷されません）。
+                  当日に手書きでチェックする列になります（空欄なら印刷されません）。
                 </p>
               </div>
 

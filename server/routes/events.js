@@ -406,9 +406,23 @@ router.post('/:id/export', async (req, res) => {
  *   includeCompany?: boolean,
  * }
  */
+/**
+ * GET /api/events/:id/attendance-info-columns
+ * 受付名簿で「自動出力できる出席情報列」（イベント出席シートの自由列）を返す
+ */
+router.get('/:id/attendance-info-columns', async (req, res) => {
+  try {
+    const columns = await sheets.getAttendanceExtraColumns();
+    res.json({ columns });
+  } catch (err) {
+    console.error('Get attendance info columns error:', err);
+    res.status(500).json({ error: '出席情報列の取得に失敗しました' });
+  }
+});
+
 router.post('/:id/attendance-list', async (req, res) => {
   try {
-    const { checkItems, walkInRows, includeCompany } = req.body || {};
+    const { checkItems, infoColumns, walkInRows, includeCompany } = req.body || {};
 
     const { data: events } = await sheets.getSheetData('イベント');
     const event = events.find(e => e['ID'] === req.params.id);
@@ -420,16 +434,23 @@ router.post('/:id/attendance-list', async (req, res) => {
     const memberById = {};
     members.forEach(m => { memberById[m['ID']] = m; });
 
+    const selectedInfoCols = Array.isArray(infoColumns) ? infoColumns.filter(Boolean) : [];
+
     // 出席者（ふりがな順）
     const attendees = attendance
       .filter(a => a['イベントID'] === req.params.id)
       .map(a => {
         const m = memberById[a['会員ID']] || {};
+        const info = {};
+        for (const col of selectedInfoCols) {
+          info[col] = a[col] || '';
+        }
         return {
           name: m['氏名'] || a['氏名'] || '',
           furigana: m['ふりがな'] || '',
           company: m['会社名'] || '',
           status: a['出席状態'] || '',
+          info,
         };
       })
       .sort((a, b) => (a.furigana || '').localeCompare(b.furigana || '', 'ja'));
@@ -443,6 +464,7 @@ router.post('/:id/attendance-list', async (req, res) => {
       },
       attendees,
       checkItems: Array.isArray(checkItems) ? checkItems.filter(Boolean) : [],
+      infoColumns: selectedInfoCols,
       walkInRows: typeof walkInRows === 'number' && walkInRows >= 0 ? walkInRows : 10,
       includeCompany: includeCompany !== false,
     });

@@ -250,6 +250,25 @@ class SheetsService {
       }));
   }
 
+  // ============ Attendance Extra Columns ============
+
+  /**
+   * イベント出席シートの基本列（システム列）
+   * これ以外の列は「自由列」としてフォーム取込・受付名簿出力で利用できる
+   */
+  static get ATTENDANCE_BASE_COLUMNS() {
+    return ['ID', 'イベントID', '会員ID', '氏名', '出席状態', '備考'];
+  }
+
+  /**
+   * イベント出席シートの自由列（基本列以外）を返す
+   */
+  async getAttendanceExtraColumns() {
+    const { headers } = await this.getSheetData('イベント出席');
+    const base = new Set(SheetsService.ATTENDANCE_BASE_COLUMNS);
+    return headers.filter(h => !base.has(h));
+  }
+
   // ============ Spreadsheet Setup ============
 
   async setupSpreadsheet() {

@@ -172,12 +172,14 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
 /**
  * イベント受付用 出席登録リスト (A4縦) を生成
  * - タイトル / 開催情報
- * - 事前登録者一覧（番号・氏名・ふりがな・会社名・事前登録状態・チェック項目×N）
+ * - 事前登録者一覧（番号・氏名・ふりがな・会社名・事前登録状態・情報列・チェック項目×N）
  * - ドタ参加用の空欄
  * @param {Object} opts
  * @param {{name:string,date?:string,location?:string,type?:string}} opts.event
- * @param {Array<{name:string,furigana:string,company:string,status:string}>} opts.attendees
- * @param {string[]} opts.checkItems  - 当日チェック列名（例: ['朝礼','MS','朝食会']）
+ * @param {Array<{name,furigana,company,status,info?:Object<string,string>}>} opts.attendees
+ *   - info: { 列名: 値 } 例: { 懇親会: '参加します' }
+ * @param {string[]} opts.checkItems  - 当日手書きチェック列名（例: ['朝礼','MS','朝食会']）
+ * @param {string[]} [opts.infoColumns] - 自動出力する出席情報列（例: ['懇親会']）
  * @param {number} [opts.walkInRows]  - ドタ参加用の空行数（既定: 10）
  * @param {boolean} [opts.includeCompany] - 会社名列を含めるか（既定: true）
  */
@@ -185,6 +187,7 @@ async function buildAttendanceListExcel({
   event,
   attendees,
   checkItems = [],
+  infoColumns = [],
   walkInRows = 10,
   includeCompany = true,
 }) {
@@ -211,6 +214,11 @@ async function buildAttendanceListExcel({
   cols.push({ key: 'furigana', label: 'ふりがな', width: 16 });
   if (includeCompany) cols.push({ key: 'company', label: '会社名', width: 22 });
   cols.push({ key: 'status', label: '事前登録', width: 9 });
+  // 出席情報列（自動出力・○ or 値）
+  for (const item of infoColumns) {
+    cols.push({ key: `info:${item}`, label: item, width: 7, isInfo: true });
+  }
+  // 当日チェック列（手書き）
   for (const item of checkItems) {
     cols.push({ key: `check:${item}`, label: item, width: 6, isCheck: true });
   }
@@ -277,6 +285,16 @@ async function buildAttendanceListExcel({
         // 事前登録は薄青、出席は薄緑などで分かりやすく
         const bg = statusFill(att.status);
         if (bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      } else if (col.isInfo) {
+        // 出席シートの自由列から取り出し、参加とみなせる値なら ○
+        const fieldName = col.key.slice('info:'.length);
+        const value = (att.info || {})[fieldName] || '';
+        cell.value = toParticipationMark(value);
+        if (cell.value === '○') {
+          cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: COLOR.eventMarkFg } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.eventMarkBg } };
+        }
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
       } else if (col.isCheck) {
         // チェック欄は空（手書き用）。やや太い罫線で目立たせる
         cell.value = '';
@@ -308,11 +326,12 @@ async function buildAttendanceListExcel({
         const cell = row.getCell(colIdx + 1);
         cell.font = { name: FONT_NAME, size: 11 };
         cell.border = thinBorder();
-        cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck ? 'center' : 'left' };
+        cell.alignment = { vertical: 'middle', horizontal: col.key === 'no' || col.key === 'status' || col.isCheck || col.isInfo ? 'center' : 'left' };
         if (col.key === 'no') {
           cell.value = walkInStartNo + i;
           cell.font = { name: FONT_NAME, size: 11, color: { argb: 'FF999999' } };
-        } else if (col.isCheck) {
+        } else if (col.isCheck || col.isInfo) {
+          // ドタ参加は出席情報列も手書き用に枠を強調
           cell.border = checkBorder();
         }
         // それ以外は空欄
@@ -369,6 +388,17 @@ function statusFill(status) {
   if (status === '遅刻') return 'FFFFF8E1';
   if (status === '欠席') return 'FFFFEBEE';
   return null;
+}
+
+// 出席情報列の値を「○」「空欄」に正規化
+// 空・否定系（不参加/欠席/なし/no/0/false/×）以外は ○
+function toParticipationMark(value) {
+  if (value == null) return '';
+  const s = String(value).trim();
+  if (!s) return '';
+  const negatives = ['不参加', '不出席', '欠席', 'なし', '無', 'no', 'No', 'NO', '0', 'false', 'False', '×', 'x', 'X'];
+  if (negatives.includes(s)) return '';
+  return '○';
 }
 
 // チェック欄用の罫線（やや濃いめ）

@@ -104,7 +104,7 @@ export default function MemberList() {
       setExportFields(res);
       // デフォルトで基本情報の主要列をチェック
       const defaultKeys = new Set([
-        'member:氏名', 'member:ふりがな', 'member:会社名',
+        'member:法人会員番号', 'member:氏名', 'member:ふりがな', 'member:会社名',
         'member:メールアドレス', 'member:入会ステータス',
       ]);
       const initial = new Set();
@@ -303,7 +303,7 @@ export default function MemberList() {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
   }
 
-  const totalCols = 3 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0);
+  const totalCols = 4 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0);
 
   return (
     <div className="member-page">
@@ -421,6 +421,7 @@ export default function MemberList() {
         <table className="data-table">
           <thead>
             <tr>
+              <th onClick={() => handleSort('corporateNumber')} className="th-corp-no">法人会員番号 <SortIcon col="corporateNumber" /></th>
               <th onClick={() => handleSort('furigana')} className="th-name">氏名 <SortIcon col="furigana" /></th>
               <th onClick={() => handleSort('company')}>会社名 <SortIcon col="company" /></th>
               <th onClick={() => handleSort('memberStatus')}>
@@ -459,6 +460,9 @@ export default function MemberList() {
             ) : (
               filtered.map(m => (
                 <tr key={m.id}>
+                  <td onClick={() => navigate(`/members/${m.id}`)} style={{ cursor: 'pointer', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                    {m.corporateNumber || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
+                  </td>
                   <td onClick={() => navigate(`/members/${m.id}`)} style={{ cursor: 'pointer' }}>
                     <div style={{ fontWeight: 500 }}>{m.name || '（氏名未入力）'}</div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{m.furigana}</div>

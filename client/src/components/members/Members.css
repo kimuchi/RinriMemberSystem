@@ -1,6 +1,7 @@
 .member-page { max-width: 1200px; }
 
 /* Table column sizing */
+.th-corp-no { white-space: nowrap; min-width: 96px; }
 .th-name { min-width: 160px; }
 .th-wrap { white-space: normal !important; min-width: 80px; max-width: 150px; }
 .td-recent-events { max-width: 180px; }

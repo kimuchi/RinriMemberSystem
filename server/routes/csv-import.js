@@ -215,10 +215,11 @@ router.post('/execute', async (req, res) => {
     let updatedCount = 0;
     let newMemberCount = 0;
 
-    // 1) 既存会員の情報更新
+    // 1) 既存会員の情報更新（1回のバッチ書き込みにまとめる＝レート制限対策）
     if (updates && updates.length > 0) {
       const { data: members } = await sheets.getSheetData('会員名簿');
       const now = new Date().toISOString();
+      const batchUpdates = [];
       for (const entry of updates) {
         if (!entry.updates || Object.keys(entry.updates).length === 0) continue;
         const member = members.find(m => m['ID'] === entry.memberId);
@@ -227,8 +228,11 @@ router.post('/execute', async (req, res) => {
         for (const [field, value] of Object.entries(entry.updates)) {
           updatedData[field] = field === 'ふりがな' ? normalizeFurigana(value) : value;
         }
-        await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
+        batchUpdates.push({ rowIndex: member._rowIndex, rowData: updatedData });
         updatedCount++;
+      }
+      if (batchUpdates.length > 0) {
+        await sheets.batchUpdateRows('会員名簿', batchUpdates);
       }
     }
 

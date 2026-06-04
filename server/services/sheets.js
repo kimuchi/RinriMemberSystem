@@ -144,6 +144,53 @@ class SheetsService {
     this.invalidateCache(sheetName);
   }
 
+  /**
+   * 複数行を1回のAPIコールでまとめて更新（書き込みレート制限対策）
+   * @param {string} sheetName
+   * @param {Array<{rowIndex:number, rowData:Object}>} updates
+   */
+  async batchUpdateRows(sheetName, updates) {
+    if (!updates || updates.length === 0) return;
+    await this.init();
+    const { headers } = await this.getSheetData(sheetName);
+    const lastCol = this.colToLetter(headers.length - 1);
+    const data = updates.map(({ rowIndex, rowData }) => ({
+      range: `${sheetName}!A${rowIndex}:${lastCol}${rowIndex}`,
+      values: [headers.map(h => (rowData[h] !== undefined ? rowData[h] : ''))],
+    }));
+
+    await this.sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data },
+    });
+    this.invalidateCache(sheetName);
+  }
+
+  /**
+   * 複数セルを1回のAPIコールでまとめて更新（書き込みレート制限対策）
+   * @param {string} sheetName
+   * @param {Array<{rowIndex:number, columnName:string, value:any}>} cellUpdates
+   */
+  async batchUpdateCells(sheetName, cellUpdates) {
+    if (!cellUpdates || cellUpdates.length === 0) return;
+    await this.init();
+    const { headerMap } = await this.getSheetData(sheetName);
+    const data = [];
+    for (const { rowIndex, columnName, value } of cellUpdates) {
+      const colIndex = headerMap[columnName];
+      if (colIndex === undefined) continue;
+      const colLetter = this.colToLetter(colIndex);
+      data.push({ range: `${sheetName}!${colLetter}${rowIndex}`, values: [[value]] });
+    }
+    if (data.length === 0) return;
+
+    await this.sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data },
+    });
+    this.invalidateCache(sheetName);
+  }
+
   async deleteRow(sheetName, rowNumber) {
     await this.init();
     const spreadsheet = await this.sheets.spreadsheets.get({

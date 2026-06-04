@@ -99,6 +99,7 @@ export default function CSVImport({ onClose, onImported }) {
   const [newMemberEdits, setNewMemberEdits] = useState({});
   const [diffResolutions, setDiffResolutions] = useState({});
   const [dupSelection, setDupSelection] = useState({});
+  const [adoptAllCsv, setAdoptAllCsv] = useState(false);
 
   // 実行
   const [executing, setExecuting] = useState(false);
@@ -208,6 +209,7 @@ export default function CSVImport({ onClose, onImported }) {
     setNewMemberChecked(new Set());
     setNewMemberEdits({});
     setDupSelection({});
+    setAdoptAllCsv(false);
     try {
       const res = await api.previewCsvImport({
         rows: csvData,
@@ -261,6 +263,7 @@ export default function CSVImport({ onClose, onImported }) {
   }
 
   function handleDiffChoice(rowIndex, field, source, value) {
+    setAdoptAllCsv(false);
     setDiffResolutions(prev => ({
       ...prev,
       [rowIndex]: { ...prev[rowIndex], [field]: { value, source } },
@@ -268,10 +271,30 @@ export default function CSVImport({ onClose, onImported }) {
   }
 
   function handleDiffEdit(rowIndex, field, value) {
+    setAdoptAllCsv(false);
     setDiffResolutions(prev => ({
       ...prev,
       [rowIndex]: { ...prev[rowIndex], [field]: { value, source: 'edit' } },
     }));
+  }
+
+  // すべての差異項目を一括でCSV値（checked）または名簿値（unchecked）に設定
+  function handleAdoptAllCsv(checked) {
+    setAdoptAllCsv(checked);
+    if (!preview) return;
+    setDiffResolutions(prev => {
+      const next = { ...prev };
+      for (const entry of preview.entries) {
+        if (!entry.matched || entry.diffs.length === 0) continue;
+        next[entry.rowIndex] = { ...next[entry.rowIndex] };
+        for (const diff of entry.diffs) {
+          next[entry.rowIndex][diff.field] = checked
+            ? { value: diff.csvValue, source: 'form' }
+            : { value: diff.memberValue, source: 'member' };
+        }
+      }
+      return next;
+    });
   }
 
   // --- 実行 ---
@@ -669,9 +692,25 @@ export default function CSVImport({ onClose, onImported }) {
             <h3 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>
               <Icon name="compare_arrows" size={16} /> 情報に差異がある会員
             </h3>
-            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
               CSVの値と名簿の値が異なる項目です。どちらを採用するか選択してください。
             </p>
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+                marginBottom: 'var(--space-md)', padding: 'var(--space-sm) var(--space-md)',
+                background: 'var(--color-primary-bg, #eff6ff)', borderRadius: 'var(--radius-md)',
+                cursor: 'pointer', fontWeight: 600, fontSize: 'var(--font-size-sm)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={adoptAllCsv}
+                onChange={e => handleAdoptAllCsv(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: 'var(--color-primary)' }}
+              />
+              <span>すべてCSVの値を採用する（差異のある項目を一括でCSV側に切り替え）</span>
+            </label>
             {withDiffs.filter(e => matchedChecked.has(e.rowIndex)).map(entry => (
               <div key={entry.rowIndex} className="diff-card">
                 <div className="diff-card-header">{entry.memberName}</div>

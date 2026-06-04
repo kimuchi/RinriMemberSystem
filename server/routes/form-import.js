@@ -432,14 +432,13 @@ router.post('/execute', async (req, res) => {
       }
     }
 
-    // 既登録会員の出席シート自由列を更新
-    for (const u of attendanceColUpdates) {
-      try {
-        await sheets.updateCell('イベント出席', u.rowIndex, u.field, u.value);
-        attendanceColumnUpdatedCount++;
-      } catch (err) {
-        console.error('Attendance column update error:', err);
-      }
+    // 既登録会員の出席シート自由列を更新（1回のバッチ書き込みにまとめる）
+    if (attendanceColUpdates.length > 0) {
+      await sheets.batchUpdateCells(
+        'イベント出席',
+        attendanceColUpdates.map(u => ({ rowIndex: u.rowIndex, columnName: u.field, value: u.value }))
+      );
+      attendanceColumnUpdatedCount += attendanceColUpdates.length;
     }
 
     // ---- 2) 会員情報の差分更新（バッチ化） ----
@@ -449,6 +448,7 @@ router.post('/execute', async (req, res) => {
     if (entriesWithUpdates.length > 0) {
       const { data: members } = await sheets.getSheetData('会員名簿');
       const now = new Date().toISOString();
+      const batchUpdates = [];
       for (const entry of entriesWithUpdates) {
         const member = members.find(m => m['ID'] === entry.memberId);
         if (member) {
@@ -456,9 +456,12 @@ router.post('/execute', async (req, res) => {
           for (const [field, value] of Object.entries(entry.updates)) {
             updatedData[field] = field === 'ふりがな' ? normalizeFurigana(value) : value;
           }
-          await sheets.updateRow('会員名簿', member._rowIndex, updatedData);
+          batchUpdates.push({ rowIndex: member._rowIndex, rowData: updatedData });
           updatedCount++;
         }
+      }
+      if (batchUpdates.length > 0) {
+        await sheets.batchUpdateRows('会員名簿', batchUpdates);
       }
     }
 

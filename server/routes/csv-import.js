@@ -193,7 +193,7 @@ router.post('/preview', async (req, res) => {
     });
   } catch (err) {
     console.error('CSV preview error:', err);
-    res.status(500).json({ error: 'プレビューの生成に失敗しました' });
+    res.status(500).json({ error: `プレビューの生成に失敗しました: ${err.message}` });
   }
 });
 
@@ -257,7 +257,7 @@ router.post('/execute', async (req, res) => {
     res.json({ success: true, updatedCount, newMemberCount });
   } catch (err) {
     console.error('CSV execute error:', err);
-    res.status(500).json({ error: 'インポートに失敗しました' });
+    res.status(500).json({ error: `インポートに失敗しました: ${err.message}` });
   }
 });
 

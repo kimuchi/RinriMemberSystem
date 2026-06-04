@@ -511,7 +511,7 @@ router.post('/execute', async (req, res) => {
     });
   } catch (err) {
     console.error('Form execute error:', err);
-    res.status(500).json({ error: '取り込みに失敗しました' });
+    res.status(500).json({ error: `取り込みに失敗しました: ${err.message}` });
   }
 });
 

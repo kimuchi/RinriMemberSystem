@@ -9,7 +9,7 @@ const router = express.Router();
 
 // 基本フィールド（シート列名 → 表示名）
 const BASE_MEMBER_FIELDS = [
-  '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
   '会社名', '住所', '会社電話番号', '入会ステータス', '備考',
 ];
 
@@ -19,6 +19,7 @@ const BASE_MEMBER_FIELDS = [
  */
 router.get('/fields', async (req, res) => {
   try {
+    await sheets.ensureColumn('会員名簿', '法人会員番号', { textFormat: true });
     const { headers } = await sheets.getSheetData('会員名簿');
     const customFields = await sheets.getCustomFields();
     const cfNames = customFields.map(cf => cf.name);
@@ -205,6 +206,7 @@ router.post('/preview', async (req, res) => {
  */
 router.post('/execute', async (req, res) => {
   try {
+    await sheets.ensureColumn('会員名簿', '法人会員番号', { textFormat: true });
     const { updates, newMembers } = req.body;
     if ((!updates || updates.length === 0) && (!newMembers || newMembers.length === 0)) {
       return res.status(400).json({ error: '取り込む対象がありません' });

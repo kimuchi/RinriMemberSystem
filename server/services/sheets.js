@@ -222,6 +222,60 @@ class SheetsService {
     return true;
   }
 
+  /**
+   * 列が存在しなければ追加する。textFormat=true の場合、
+   * 新規追加した列を「テキスト書式」にして先頭ゼロ等が消えないようにする。
+   * 既存列の場合は何もしない（書式の再設定もしない）。
+   * @returns {boolean} 新規追加したら true
+   */
+  async ensureColumn(sheetName, columnName, { textFormat = false } = {}) {
+    await this.init();
+    const { headers } = await this.getSheetData(sheetName);
+    if (headers.includes(columnName)) return false;
+    await this.addColumnToSheet(sheetName, columnName);
+    if (textFormat) {
+      await this.setColumnFormatToText(sheetName, columnName);
+    }
+    return true;
+  }
+
+  /**
+   * 指定列をテキスト書式に設定する（列全体＝将来の行も含む）。
+   * これにより "007" のような先頭ゼロ付き文字列が数値化されず保持される。
+   */
+  async setColumnFormatToText(sheetName, columnName) {
+    await this.init();
+    const { headerMap } = await this.getSheetData(sheetName);
+    const colIndex = headerMap[columnName];
+    if (colIndex === undefined) return false;
+
+    const spreadsheet = await this.sheets.spreadsheets.get({
+      spreadsheetId: this.spreadsheetId,
+    });
+    const sheet = spreadsheet.data.sheets.find(s => s.properties.title === sheetName);
+    if (!sheet) return false;
+
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      requestBody: {
+        requests: [{
+          repeatCell: {
+            // 行インデックスを省略 → 列全体（既存・将来の行を含む）
+            range: {
+              sheetId: sheet.properties.sheetId,
+              startColumnIndex: colIndex,
+              endColumnIndex: colIndex + 1,
+            },
+            cell: { userEnteredFormat: { numberFormat: { type: 'TEXT' } } },
+            fields: 'userEnteredFormat.numberFormat',
+          },
+        }],
+      },
+    });
+    this.invalidateCache(sheetName);
+    return true;
+  }
+
   // ============ Custom Fields ============
 
   async getCustomFields() {
@@ -277,7 +331,7 @@ class SheetsService {
     const sheetConfigs = [
       {
         name: '会員名簿',
-        headers: ['ID', '登録日', '更新日', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+        headers: ['ID', '登録日', '更新日', '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
           '会社名', '住所', '会社電話番号', '入会ステータス', '備考'],
       },
       {
@@ -388,6 +442,13 @@ class SheetsService {
           [this.generateId(), '名簿総数', 'groups', 'muted', '*', '4', 'true'],
         ]},
       });
+    }
+
+    // 法人会員番号列は先頭ゼロを保持するためテキスト書式にする
+    try {
+      await this.setColumnFormatToText('会員名簿', '法人会員番号');
+    } catch (e) {
+      console.error('Set 法人会員番号 text format error:', e);
     }
 
     return true;

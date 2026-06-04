@@ -12,7 +12,7 @@ export default function MemberDetail() {
   const isNew = id === 'new';
 
   const [form, setForm] = useState({
-    name: '', furigana: '', email: '', phone: '',
+    corporateNumber: '', name: '', furigana: '', email: '', phone: '',
     company: '', address: '', companyPhone: '',
     memberStatus: '', notes: '', customFields: {}, extraFields: {},
   });
@@ -47,6 +47,7 @@ export default function MemberDetail() {
         setExtraFieldNames(res.extraFields || []);
         setEventHistory(res.eventHistory || []);
         setForm({
+          corporateNumber: m.corporateNumber || '',
           name: m.name || '',
           furigana: m.furigana || '',
           email: m.email || '',
@@ -158,6 +159,16 @@ export default function MemberDetail() {
       <div className="card">
         <div className="card-body">
           <div className="member-form-grid">
+            <div className="form-group">
+              <label className="form-label">法人会員番号</label>
+              <input
+                className="form-input"
+                value={form.corporateNumber}
+                onChange={e => handleChange('corporateNumber', e.target.value)}
+                placeholder="例：007123（先頭の0も保持されます）"
+                inputMode="numeric"
+              />
+            </div>
             <div className="form-group">
               <label className="form-label">氏名 *</label>
               <input className="form-input" value={form.name} onChange={e => handleChange('name', e.target.value)} placeholder="例：山田 太郎" />

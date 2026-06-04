@@ -171,6 +171,7 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
 
 // 列名 → 印刷時の推奨幅（A4縦・Meiryo UI 11pt前提）
 const MEMBER_COL_WIDTHS = {
+  '法人会員番号': 14,
   '氏名': 18,
   'ふりがな': 16,
   '会社名': 22,

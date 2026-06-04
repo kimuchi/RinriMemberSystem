@@ -233,6 +233,7 @@ export default function MemberList() {
         if ((m.furigana || '').toLowerCase().includes(s)) return true;
         if ((m.company || '').toLowerCase().includes(s)) return true;
         if ((m.email || '').toLowerCase().includes(s)) return true;
+        if ((m.corporateNumber || '').toLowerCase().includes(s)) return true;
         // 追加列も検索対象
         const ef = m.extraFields || {};
         for (const col of extraFields) {
@@ -333,7 +334,7 @@ export default function MemberList() {
           <Icon name="search" size={18} />
           <input
             type="text"
-            placeholder="氏名・会社名・メールで検索..."
+            placeholder="氏名・会社名・メール・会員番号で検索..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />

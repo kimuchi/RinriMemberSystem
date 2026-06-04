@@ -6,6 +6,7 @@ const router = express.Router();
 
 // 基本フィールドの定義（APIキー → シート列名）
 const BASE_FIELDS = {
+  corporateNumber: '法人会員番号',
   name: '氏名',
   furigana: 'ふりがな',
   email: 'メールアドレス',
@@ -19,9 +20,22 @@ const BASE_FIELDS = {
 
 // システム管理列（UIに表示しない）
 const SYSTEM_COLUMNS = new Set([
-  'ID', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  'ID', '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
   '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
 ]);
+
+// 既存スプレッドシートに基本列が無い場合に補完する（プロセス内で1回のみ実行）
+let _baseColumnsEnsured = false;
+async function ensureBaseColumns() {
+  if (_baseColumnsEnsured) return;
+  try {
+    // 法人会員番号は先頭ゼロ保持のためテキスト書式で追加
+    await sheets.ensureColumn('会員名簿', '法人会員番号', { textFormat: true });
+    _baseColumnsEnsured = true;
+  } catch (err) {
+    console.error('ensureBaseColumns error:', err);
+  }
+}
 
 /**
  * スプレッドシートのヘッダーから追加列（自由文フィールド）を検出
@@ -81,6 +95,7 @@ async function autoFillMembers(data) {
 function formatMember(m, customFields, extraFields) {
   const result = {
     id: m['ID'],
+    corporateNumber: m['法人会員番号'],
     name: m['氏名'],
     furigana: m['ふりがな'],
     email: m['メールアドレス'],
@@ -113,6 +128,7 @@ function formatMember(m, customFields, extraFields) {
  */
 router.get('/', async (req, res) => {
   try {
+    await ensureBaseColumns();
     const { headers, data } = await sheets.getSheetData('会員名簿');
     await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
@@ -174,6 +190,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/export-fields', async (req, res) => {
   try {
+    await ensureBaseColumns();
     const { headers: memberHeaders } = await sheets.getSheetData('会員名簿');
     const customFields = await sheets.getCustomFields();
     const customNames = new Set(customFields.map(cf => cf.name));
@@ -355,6 +372,7 @@ router.post('/export', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
+    await ensureBaseColumns();
     const { headers, data } = await sheets.getSheetData('会員名簿');
     await autoFillMembers(data);
     const customFields = await sheets.getCustomFields();
@@ -401,6 +419,7 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
+    await ensureBaseColumns();
     const id = sheets.generateId();
     const now = new Date().toISOString();
     const rowData = {
@@ -447,6 +466,7 @@ router.post('/', async (req, res) => {
  */
 router.put('/:id', async (req, res) => {
   try {
+    await ensureBaseColumns();
     const { data } = await sheets.getSheetData('会員名簿');
     const member = data.find(m => m['ID'] === req.params.id);
     if (!member) return res.status(404).json({ error: '会員が見つかりません' });

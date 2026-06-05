@@ -4,6 +4,7 @@ import { api } from '../../utils/api';
 import { useApp } from '../../App';
 import Icon from '../Icon';
 import CSVImport from './CSVImport';
+import MergeMembersModal from './MergeMembersModal';
 import './Members.css';
 
 export default function MemberList() {
@@ -25,6 +26,11 @@ export default function MemberList() {
 
   // CSVインポート
   const [showCsvImport, setShowCsvImport] = useState(false);
+
+  // 統合モード
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSelected, setMergeSelected] = useState(new Set());
+  const [showMergeModal, setShowMergeModal] = useState(false);
 
   // Excelエクスポート
   const [showExportModal, setShowExportModal] = useState(false);
@@ -92,6 +98,34 @@ export default function MemberList() {
 
   function handleCfFilter(cfId, value) {
     setCfFilters(prev => ({ ...prev, [cfId]: value }));
+  }
+
+  // ---- 統合モード ----
+  function toggleMergeMode() {
+    setMergeMode(prev => !prev);
+    setMergeSelected(new Set());
+  }
+  function toggleMergeSelection(memberId) {
+    setMergeSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  }
+  function openMergeModal() {
+    if (mergeSelected.size < 2) {
+      toast.warning('2件以上選択してください');
+      return;
+    }
+    setShowMergeModal(true);
+  }
+  function onMergeComplete() {
+    setShowMergeModal(false);
+    setMergeMode(false);
+    setMergeSelected(new Set());
+    setLoading(true);
+    loadData();
   }
 
   // ---- エクスポート ----
@@ -303,7 +337,7 @@ export default function MemberList() {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
   }
 
-  const totalCols = 4 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0);
+  const totalCols = 4 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0) + (mergeMode ? 1 : 0);
 
   return (
     <div className="member-page">
@@ -313,20 +347,56 @@ export default function MemberList() {
           <p className="page-subtitle">{filtered.length}件表示 / {members.length}件中</p>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary" onClick={openExportModal}>
-            <Icon name="download" size={18} />
-            Excelエクスポート
-          </button>
-          <button className="btn btn-secondary" onClick={() => setShowCsvImport(true)}>
-            <Icon name="upload_file" size={18} />
-            CSVインポート
-          </button>
-          <button className="btn btn-primary" onClick={() => navigate('/members/new')}>
-            <Icon name="person_add" size={18} />
-            新規追加
-          </button>
+          {!mergeMode && (
+            <>
+              <button className="btn btn-secondary" onClick={openExportModal}>
+                <Icon name="download" size={18} />
+                Excelエクスポート
+              </button>
+              <button className="btn btn-secondary" onClick={() => setShowCsvImport(true)}>
+                <Icon name="upload_file" size={18} />
+                CSVインポート
+              </button>
+              <button className="btn btn-secondary" onClick={toggleMergeMode} title="同一人物の重複レコードを1つにまとめます">
+                <Icon name="merge_type" size={18} />
+                統合
+              </button>
+              <button className="btn btn-primary" onClick={() => navigate('/members/new')}>
+                <Icon name="person_add" size={18} />
+                新規追加
+              </button>
+            </>
+          )}
+          {mergeMode && (
+            <>
+              <button className="btn btn-secondary" onClick={toggleMergeMode}>
+                <Icon name="close" size={18} />
+                統合モードを終了
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={openMergeModal}
+                disabled={mergeSelected.size < 2}
+              >
+                <Icon name="merge_type" size={18} />
+                選択した{mergeSelected.size}件を統合
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {mergeMode && (
+        <div className="merge-banner">
+          <Icon name="merge_type" size={18} style={{ color: 'var(--color-primary)' }} />
+          <span>
+            <strong>統合モード</strong>: 同一人物のレコードにチェックを入れて「選択した N件を統合」を押すと、1つに統合してイベント参加履歴も引き継ぎます。
+            検索やフィルタで重複を絞り込めます。
+          </span>
+          <span className="merge-banner-spacer" />
+          <span style={{ fontWeight: 600 }}>選択中: {mergeSelected.size}件</span>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="filter-bar">
@@ -421,6 +491,23 @@ export default function MemberList() {
         <table className="data-table">
           <thead>
             <tr>
+              {mergeMode && (
+                <th className="merge-select-cell">
+                  <input
+                    type="checkbox"
+                    checked={filtered.length > 0 && filtered.every(m => mergeSelected.has(m.id))}
+                    onChange={() => {
+                      const allChecked = filtered.length > 0 && filtered.every(m => mergeSelected.has(m.id));
+                      setMergeSelected(prev => {
+                        const next = new Set(prev);
+                        filtered.forEach(m => allChecked ? next.delete(m.id) : next.add(m.id));
+                        return next;
+                      });
+                    }}
+                    title="表示中の全員を選択/解除"
+                  />
+                </th>
+              )}
               <th onClick={() => handleSort('corporateNumber')} className="th-corp-no">法人会員番号 <SortIcon col="corporateNumber" /></th>
               <th onClick={() => handleSort('furigana')} className="th-name">氏名 <SortIcon col="furigana" /></th>
               <th onClick={() => handleSort('company')}>会社名 <SortIcon col="company" /></th>
@@ -459,11 +546,26 @@ export default function MemberList() {
               </tr>
             ) : (
               filtered.map(m => (
-                <tr key={m.id}>
-                  <td onClick={() => navigate(`/members/${m.id}`)} style={{ cursor: 'pointer', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                <tr key={m.id} className={mergeMode && mergeSelected.has(m.id) ? 'merge-selected' : ''}>
+                  {mergeMode && (
+                    <td className="merge-select-cell" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={mergeSelected.has(m.id)}
+                        onChange={() => toggleMergeSelection(m.id)}
+                      />
+                    </td>
+                  )}
+                  <td
+                    onClick={() => mergeMode ? toggleMergeSelection(m.id) : navigate(`/members/${m.id}`)}
+                    style={{ cursor: 'pointer', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+                  >
                     {m.corporateNumber || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
                   </td>
-                  <td onClick={() => navigate(`/members/${m.id}`)} style={{ cursor: 'pointer' }}>
+                  <td
+                    onClick={() => mergeMode ? toggleMergeSelection(m.id) : navigate(`/members/${m.id}`)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <div style={{ fontWeight: 500 }}>{m.name || '（氏名未入力）'}</div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{m.furigana}</div>
                   </td>
@@ -539,6 +641,16 @@ export default function MemberList() {
         <CSVImport
           onClose={() => setShowCsvImport(false)}
           onImported={() => { setShowCsvImport(false); setLoading(true); loadData(); }}
+        />
+      )}
+
+      {showMergeModal && (
+        <MergeMembersModal
+          members={members.filter(m => mergeSelected.has(m.id))}
+          customFields={customFields}
+          extraFields={extraFields}
+          onClose={() => setShowMergeModal(false)}
+          onComplete={onMergeComplete}
         />
       )}
 

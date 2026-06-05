@@ -75,6 +75,7 @@ export const api = {
   updateMemberStatus: (id, field, value) =>
     apiFetch(`/api/members/${id}/status`, { method: 'PATCH', body: JSON.stringify({ field, value }) }),
   deleteMember: (id) => apiFetch(`/api/members/${id}`, { method: 'DELETE' }),
+  mergeMembers: (data) => apiFetch('/api/members/merge', { method: 'POST', body: JSON.stringify(data) }),
   getMemberExportFields: () => apiFetch('/api/members/export-fields'),
   exportMembers: (memberIds, columns) =>
     apiDownload(

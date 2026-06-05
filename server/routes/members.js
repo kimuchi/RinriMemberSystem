@@ -367,6 +367,120 @@ router.post('/export', async (req, res) => {
 });
 
 /**
+ * POST /api/members/merge - 同一人物の複数レコードを1つに統合
+ * 注意: /:id より前に定義する必要あり
+ * body: {
+ *   primaryId: string,         // 残す会員のID
+ *   mergedIds: string[],       // 統合して削除する会員IDの配列
+ *   fields?: { 列名: 値 }      // 統合後の各フィールド値（プライマリ行へ上書き）
+ * }
+ */
+router.post('/merge', async (req, res) => {
+  try {
+    const { primaryId, mergedIds, fields } = req.body;
+    if (!primaryId) return res.status(400).json({ error: '原本の会員が指定されていません' });
+    if (!Array.isArray(mergedIds) || mergedIds.length === 0) {
+      return res.status(400).json({ error: '統合対象が選択されていません' });
+    }
+    if (mergedIds.includes(primaryId)) {
+      return res.status(400).json({ error: '原本と統合先が重複しています' });
+    }
+
+    await ensureBaseColumns();
+
+    const { data: members } = await sheets.getSheetData('会員名簿');
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+
+    const primary = members.find(m => m['ID'] === primaryId);
+    if (!primary) return res.status(404).json({ error: '原本の会員が見つかりません' });
+    const mergedMembers = mergedIds
+      .map(id => members.find(m => m['ID'] === id))
+      .filter(Boolean);
+    if (mergedMembers.length === 0) {
+      return res.status(404).json({ error: '統合先の会員が見つかりません' });
+    }
+
+    // 1) 原本にマージ後の値を反映
+    const now = new Date().toISOString();
+    const updatedPrimary = { ...primary, '更新日': now };
+    if (fields && typeof fields === 'object') {
+      for (const [field, value] of Object.entries(fields)) {
+        if (field === 'ID' || field === '登録日') continue; // 保護列
+        let v = value == null ? '' : value;
+        if (field === 'ふりがな') v = normalizeFurigana(v);
+        updatedPrimary[field] = v;
+      }
+    }
+    await sheets.updateRow('会員名簿', primary._rowIndex, updatedPrimary);
+
+    // 2) 統合先の出席履歴を原本のIDへ付け替え（会員IDと氏名の denormalized コピーを更新）
+    const mergedIdSet = new Set(mergedIds);
+    const attendanceToTransfer = attendance.filter(a => mergedIdSet.has(a['会員ID']));
+    if (attendanceToTransfer.length > 0) {
+      const cellUpdates = [];
+      const newName = updatedPrimary['氏名'] || primary['氏名'] || '';
+      for (const a of attendanceToTransfer) {
+        cellUpdates.push({ rowIndex: a._rowIndex, columnName: '会員ID', value: primaryId });
+        cellUpdates.push({ rowIndex: a._rowIndex, columnName: '氏名', value: newName });
+      }
+      await sheets.batchUpdateCells('イベント出席', cellUpdates);
+    }
+
+    // 3) 同一イベントで原本にも既登録だった場合に発生する二重出席行を削除
+    //    （いま付け替えた行 vs もともと原本にあった行が同じイベントに対して並ぶケース）
+    const { data: refreshedAttendance } = await sheets.getSheetData('イベント出席');
+    const byEvent = {};
+    for (const a of refreshedAttendance.filter(a => a['会員ID'] === primaryId)) {
+      const ev = a['イベントID'] || '';
+      if (!byEvent[ev]) byEvent[ev] = [];
+      byEvent[ev].push(a);
+    }
+    let duplicateRemoved = 0;
+    const dupRowsToDelete = [];
+    for (const rows of Object.values(byEvent)) {
+      if (rows.length <= 1) continue;
+      // 出席状態が「出席/遅刻」優先で1件残し、残りを削除
+      rows.sort((a, b) => statusRank(a['出席状態']) - statusRank(b['出席状態']));
+      for (let i = 1; i < rows.length; i++) {
+        dupRowsToDelete.push(rows[i]._rowIndex);
+        duplicateRemoved++;
+      }
+    }
+    // 行は下から削除
+    dupRowsToDelete.sort((a, b) => b - a);
+    for (const ri of dupRowsToDelete) {
+      await sheets.deleteRow('イベント出席', ri);
+    }
+
+    // 4) 統合先の会員行を削除（下から）
+    const toDelete = [...mergedMembers].sort((a, b) => b._rowIndex - a._rowIndex);
+    for (const m of toDelete) {
+      await sheets.deleteRow('会員名簿', m._rowIndex);
+    }
+
+    res.json({
+      success: true,
+      transferredAttendanceCount: attendanceToTransfer.length,
+      duplicateAttendanceRemoved: duplicateRemoved,
+      deletedMemberCount: mergedMembers.length,
+    });
+  } catch (err) {
+    console.error('Member merge error:', err);
+    res.status(500).json({ error: `統合に失敗しました: ${err.message}` });
+  }
+});
+
+// 出席状態の優先順位（小さいほど残す）
+function statusRank(status) {
+  if (status === '出席') return 0;
+  if (status === '遅刻') return 1;
+  if (status === '事前登録') return 2;
+  if (status === '欠席') return 3;
+  if (status === '未定') return 4;
+  return 5;
+}
+
+/**
  * GET /api/members/:id - 会員詳細
  * イベント参加履歴を全件付与
  */

@@ -5,16 +5,18 @@ import Icon from '../Icon';
 
 // 会員API値 → スプレッドシート列名
 const BASIC_FIELDS = [
-  { key: 'corporateNumber', col: '法人会員番号' },
-  { key: 'name',            col: '氏名' },
-  { key: 'furigana',        col: 'ふりがな' },
-  { key: 'email',           col: 'メールアドレス' },
-  { key: 'phone',           col: '携帯電話番号' },
-  { key: 'company',         col: '会社名' },
-  { key: 'address',         col: '住所' },
-  { key: 'companyPhone',    col: '会社電話番号' },
-  { key: 'memberStatus',    col: '入会ステータス' },
-  { key: 'notes',           col: '備考' },
+  { key: 'corporateNumber',    col: '法人会員番号' },
+  { key: 'name',               col: '氏名' },
+  { key: 'furigana',           col: 'ふりがな' },
+  { key: 'email',              col: 'メールアドレス' },
+  { key: 'phone',              col: '携帯電話番号' },
+  { key: 'company',            col: '会社名' },
+  { key: 'address',            col: '住所' },
+  { key: 'companyPhone',       col: '会社電話番号' },
+  { key: 'memberStatus',       col: '入会ステータス' },
+  { key: 'joinMonth',          col: '入会月' },
+  { key: 'transferStartMonth', col: '振替開始月' },
+  { key: 'notes',              col: '備考' },
 ];
 
 export default function MergeMembersModal({ members, customFields, extraFields, onClose, onComplete }) {

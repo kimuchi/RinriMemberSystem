@@ -14,7 +14,8 @@ export default function MemberDetail() {
   const [form, setForm] = useState({
     corporateNumber: '', name: '', furigana: '', email: '', phone: '',
     company: '', address: '', companyPhone: '',
-    memberStatus: '', notes: '', customFields: {}, extraFields: {},
+    memberStatus: '', joinMonth: '', transferStartMonth: '',
+    notes: '', customFields: {}, extraFields: {},
   });
   const [statuses, setStatuses] = useState([]);
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
@@ -56,6 +57,8 @@ export default function MemberDetail() {
           address: m.address || '',
           companyPhone: m.companyPhone || '',
           memberStatus: m.memberStatus || '',
+          joinMonth: m.joinMonth || '',
+          transferStartMonth: m.transferStartMonth || '',
           notes: m.notes || '',
           customFields: m.customFields || {},
           extraFields: m.extraFields || {},
@@ -203,6 +206,24 @@ export default function MemberDetail() {
                 <option value="">-- 選択してください --</option>
                 {statuses.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">入会月</label>
+              <input
+                className="form-input"
+                type="month"
+                value={form.joinMonth}
+                onChange={e => handleChange('joinMonth', e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">振替開始月</label>
+              <input
+                className="form-input"
+                type="month"
+                value={form.transferStartMonth}
+                onChange={e => handleChange('transferStartMonth', e.target.value)}
+              />
             </div>
 
             {/* カスタムフィールド（ドロップダウン） */}

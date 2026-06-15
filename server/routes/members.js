@@ -15,13 +15,15 @@ const BASE_FIELDS = {
   address: '住所',
   companyPhone: '会社電話番号',
   memberStatus: '入会ステータス',
+  joinMonth: '入会月',
+  transferStartMonth: '振替開始月',
   notes: '備考',
 };
 
 // システム管理列（UIに表示しない）
 const SYSTEM_COLUMNS = new Set([
   'ID', '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
-  '会社名', '住所', '会社電話番号', '入会ステータス', '備考', '登録日', '更新日',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '入会月', '振替開始月', '備考', '登録日', '更新日',
 ]);
 
 // 既存スプレッドシートに基本列が無い場合に補完する（プロセス内で1回のみ実行）
@@ -31,6 +33,9 @@ async function ensureBaseColumns() {
   try {
     // 法人会員番号は先頭ゼロ保持のためテキスト書式で追加
     await sheets.ensureColumn('会員名簿', '法人会員番号', { textFormat: true });
+    // 月フィールド（YYYY-MM形式、テキストで保存）
+    await sheets.ensureColumn('会員名簿', '入会月', { textFormat: true });
+    await sheets.ensureColumn('会員名簿', '振替開始月', { textFormat: true });
     _baseColumnsEnsured = true;
   } catch (err) {
     console.error('ensureBaseColumns error:', err);
@@ -104,6 +109,8 @@ function formatMember(m, customFields, extraFields) {
     address: m['住所'],
     companyPhone: m['会社電話番号'],
     memberStatus: m['入会ステータス'],
+    joinMonth: m['入会月'],
+    transferStartMonth: m['振替開始月'],
     notes: m['備考'],
     createdAt: m['登録日'],
     updatedAt: m['更新日'],

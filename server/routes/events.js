@@ -7,7 +7,7 @@ const router = express.Router();
 // 会員名簿の基本列（カスタム/追加列の判定に使用）
 const MEMBER_BASIC_COLUMNS = new Set([
   '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
-  '会社名', '住所', '会社電話番号', '入会ステータス', '備考',
+  '会社名', '住所', '会社電話番号', '入会ステータス', '入会月', '振替開始月', '備考',
 ]);
 // エクスポート対象外のシステム列
 const MEMBER_SYSTEM_COLUMNS = new Set(['ID', '登録日', '更新日']);
@@ -418,7 +418,7 @@ router.get('/:id/attendance-list-fields', async (req, res) => {
     const systemSet = new Set(['ID', '登録日', '更新日']);
     const basicSet = new Set([
       '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
-      '会社名', '住所', '会社電話番号', '入会ステータス', '備考',
+      '会社名', '住所', '会社電話番号', '入会ステータス', '入会月', '振替開始月', '備考',
     ]);
 
     const basic = [];

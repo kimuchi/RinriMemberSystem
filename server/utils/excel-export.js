@@ -77,9 +77,17 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
   wb.created = new Date();
   const ws = wb.addWorksheet(sheetName);
 
+  // 月フィールド列のセル値を YYYY/MM に整形
+  const monthColIndexes = new Set();
+  columns.forEach((c, i) => {
+    const fieldName = c.key && c.key.startsWith('member:') ? c.key.slice('member:'.length) : null;
+    if (fieldName && MONTH_FIELDS.has(fieldName)) monthColIndexes.add(i);
+  });
+  const transformedRows = rows.map(r => r.map((v, i) => (monthColIndexes.has(i) ? formatMonth(v) : v)));
+
   // ヘッダー + データ行を投入
   ws.addRow(columns.map(c => c.label || ''));
-  for (const r of rows) ws.addRow(r);
+  for (const r of transformedRows) ws.addRow(r);
 
   const totalRows = ws.rowCount;
   const totalCols = columns.length;
@@ -161,6 +169,8 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
     }
     // 全角=2, 半角=1 の合計が Excel の char width 単位とほぼ等価。少しだけ余白。
     wsCol.width = Math.min(Math.max(maxW + 2, 8), 50);
+    // 月フィールドは Excel に日付と判定されないようテキスト書式に
+    if (monthColIndexes.has(idx)) wsCol.numFmt = '@';
   });
 
   // ヘッダー固定
@@ -170,6 +180,15 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
 }
 
 // 列名 → 印刷時の推奨幅（A4縦・Meiryo UI 11pt前提）
+// 月フィールドの列名（Excelで日付として勝手に解釈されるのを防ぐ）
+const MONTH_FIELDS = new Set(['入会月', '振替開始月']);
+
+// "YYYY-MM" → "YYYY/MM" に整形（空はそのまま）
+function formatMonth(v) {
+  if (!v) return v;
+  return String(v).replace('-', '/');
+}
+
 const MEMBER_COL_WIDTHS = {
   '法人会員番号': 14,
   '氏名': 18,
@@ -310,6 +329,10 @@ async function buildAttendanceListExcel({
         const field = col.memberField;
         let v = (att.member || {})[field] || '';
         if (field === '氏名' && !v) v = att.fallbackName || '';
+        if (MONTH_FIELDS.has(field)) {
+          v = formatMonth(v);
+          cell.numFmt = '@';
+        }
         cell.value = v;
       } else if (col.isAttendanceStatus) {
         cell.value = att.attendanceStatus || '';

@@ -5,6 +5,7 @@ import { useApp } from '../../App';
 import Icon from '../Icon';
 import CSVImport from './CSVImport';
 import MergeMembersModal from './MergeMembersModal';
+import ColumnFilter from './ColumnFilter';
 import './Members.css';
 
 export default function MemberList() {
@@ -18,9 +19,10 @@ export default function MemberList() {
   const [cfOptionsMap, setCfOptionsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [cfFilters, setCfFilters] = useState({});
-  const [efFilters, setEfFilters] = useState({});
+  // 統一された列フィルタ: { '<sortKey>': Set<value> } 空SetやundefinedはNo-filter
+  const [columnFilters, setColumnFilters] = useState({});
+  const [openFilterFor, setOpenFilterFor] = useState(null); // どの列のポップオーバーが開いているか
+  const [filterAnchor, setFilterAnchor] = useState(null);    // アンカー要素
   const [sortKey, setSortKey] = useState('furigana');
   const [sortDir, setSortDir] = useState('asc');
 
@@ -94,10 +96,6 @@ export default function MemberList() {
     } catch (err) {
       toast.error('ステータスの更新に失敗しました');
     }
-  }
-
-  function handleCfFilter(cfId, value) {
-    setCfFilters(prev => ({ ...prev, [cfId]: value }));
   }
 
   // ---- 統合モード ----
@@ -237,26 +235,36 @@ export default function MemberList() {
     });
   }, [eventList, showEventHistory, eventPeriodMonths]);
 
-  // 追加列のユニーク値を計算（フィルター用ドロップダウン）
-  const extraFieldOptions = useMemo(() => {
-    const map = {};
-    extraFields.forEach(col => {
-      const vals = new Set();
-      members.forEach(m => {
-        const v = (m.extraFields || {})[col];
-        if (v) vals.add(v);
-      });
-      map[col] = [...vals].sort((a, b) => a.localeCompare(b, 'ja'));
-    });
-    return map;
-  }, [members, extraFields]);
-
-  // ソート値を取得するヘルパー
-  function getSortValue(m, key) {
+  // ソート値を取得するヘルパー（フィルタ値も同じ関数を使用）
+  function getColumnValue(m, key) {
     if (key.startsWith('cf:')) return (m.customFields || {})[key.slice(3)] || '';
     if (key.startsWith('ef:')) return (m.extraFields || {})[key.slice(3)] || '';
     return m[key] || '';
   }
+  const getSortValue = getColumnValue;
+
+  // 各フィルタ可能列のユニーク値を計算（ポップオーバー用）
+  // 入会月・振替開始月は時系列で、それ以外は日本語ロケール順
+  const uniqueValuesByColumn = useMemo(() => {
+    const result = {};
+    const keys = [
+      'corporateNumber', 'company', 'memberStatus', 'joinMonth', 'transferStartMonth',
+      ...customFields.map(cf => `cf:${cf.id}`),
+      ...extraFields.map(c => `ef:${c}`),
+    ];
+    for (const key of keys) {
+      const set = new Set();
+      members.forEach(m => { set.add(String(getColumnValue(m, key) || '')); });
+      let arr = [...set];
+      if (key === 'joinMonth' || key === 'transferStartMonth') {
+        arr.sort(); // YYYY-MM の文字列比較で時系列ソート
+      } else {
+        arr.sort((a, b) => a.localeCompare(b, 'ja'));
+      }
+      result[key] = arr;
+    }
+    return result;
+  }, [members, customFields, extraFields]);
 
   const filtered = useMemo(() => {
     let result = [...members];
@@ -276,20 +284,10 @@ export default function MemberList() {
         return false;
       });
     }
-    if (statusFilter) {
-      result = result.filter(m => m.memberStatus === statusFilter);
-    }
-    // カスタムフィールドの絞り込み
-    for (const [cfId, val] of Object.entries(cfFilters)) {
-      if (val) {
-        result = result.filter(m => m.customFields[cfId] === val);
-      }
-    }
-    // 追加列の絞り込み
-    for (const [col, val] of Object.entries(efFilters)) {
-      if (val) {
-        result = result.filter(m => (m.extraFields || {})[col] === val);
-      }
+    // 列ごとのチェックボックス絞り込み（Excel風・複数選択）
+    for (const [key, selectedSet] of Object.entries(columnFilters)) {
+      if (!selectedSet || selectedSet.size === 0) continue;
+      result = result.filter(m => selectedSet.has(String(getColumnValue(m, key) || '')));
     }
     // イベント参加で絞り込み
     if (showEventHistory && eventStatusFilter) {
@@ -311,7 +309,9 @@ export default function MemberList() {
       return 0;
     });
     return result;
-  }, [members, search, statusFilter, cfFilters, efFilters, sortKey, sortDir, showEventHistory, eventStatusFilter, periodEvents, extraFields]);
+  }, [members, search, columnFilters, sortKey, sortDir, showEventHistory, eventStatusFilter, periodEvents, extraFields]);
+
+  const hasActiveFilter = !!search || Object.values(columnFilters).some(s => s && s.size > 0) || (showEventHistory && eventStatusFilter);
 
   // 会員ごとの期間内参加回数を計算
   function getAttendanceCount(member) {
@@ -333,11 +333,56 @@ export default function MemberList() {
     return <Icon name={sortDir === 'asc' ? 'expand_less' : 'expand_more'} size={14} className="sort-icon active" />;
   }
 
+  // フィルタ可能なヘッダーセル: ラベル + ソートアイコン + 漏斗アイコン
+  function FilterableTh({ colKey, label, className }) {
+    const isFiltered = (columnFilters[colKey] && columnFilters[colKey].size > 0);
+    return (
+      <th className={className}>
+        <span className="th-filter-wrap">
+          <span onClick={() => handleSort(colKey)} style={{ cursor: 'pointer' }}>
+            {label} <SortIcon col={colKey} />
+          </span>
+          <button
+            type="button"
+            className={`th-filter-btn ${isFiltered ? 'active' : ''}`}
+            onClick={e => {
+              e.stopPropagation();
+              if (openFilterFor === colKey) {
+                setOpenFilterFor(null);
+                setFilterAnchor(null);
+              } else {
+                setOpenFilterFor(colKey);
+                setFilterAnchor(e.currentTarget);
+              }
+            }}
+            title="絞り込み"
+          >
+            <Icon name="filter_alt" size={14} />
+          </button>
+        </span>
+      </th>
+    );
+  }
+
+  function setColumnFilter(key, selectedSet) {
+    setColumnFilters(prev => {
+      const next = { ...prev };
+      if (!selectedSet || selectedSet.size === 0) delete next[key];
+      else next[key] = selectedSet;
+      return next;
+    });
+  }
+
+  function clearAllFilters() {
+    setColumnFilters({});
+    setSearch('');
+  }
+
   if (loading) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}><div className="spinner" /></div>;
   }
 
-  const totalCols = 4 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0) + (mergeMode ? 1 : 0);
+  const totalCols = 6 + customFields.length + extraFields.length + 1 + (showEventHistory ? periodEvents.length + 1 : 0) + (mergeMode ? 1 : 0);
 
   return (
     <div className="member-page">
@@ -409,43 +454,14 @@ export default function MemberList() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <select
-          className="form-select"
-          style={{ maxWidth: 200 }}
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-        >
-          <option value="">すべてのステータス</option>
-          {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {customFields.map(cf => (
-          <select
-            key={cf.id}
-            className="form-select"
-            style={{ maxWidth: 200 }}
-            value={cfFilters[cf.id] || ''}
-            onChange={e => handleCfFilter(cf.id, e.target.value)}
-          >
-            <option value="">すべての{cf.name}</option>
-            {(cfOptionsMap[cf.id] || []).map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-        ))}
-        {extraFields.map(col => {
-          const opts = extraFieldOptions[col] || [];
-          if (opts.length === 0 || opts.length > 50) return null;
-          return (
-            <select
-              key={col}
-              className="form-select"
-              style={{ maxWidth: 200 }}
-              value={efFilters[col] || ''}
-              onChange={e => setEfFilters(prev => ({ ...prev, [col]: e.target.value }))}
-            >
-              <option value="">すべての{col}</option>
-              {opts.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          );
-        })}
+        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+          各列の <Icon name="filter_alt" size={12} /> で絞り込み（複数選択可）
+        </span>
+        {hasActiveFilter && (
+          <button className="btn btn-secondary btn-sm" onClick={clearAllFilters} title="すべての絞り込みを解除">
+            <Icon name="filter_alt_off" size={14} /> 解除
+          </button>
+        )}
       </div>
 
       {/* イベント参加履歴の表示設定 */}
@@ -508,21 +524,27 @@ export default function MemberList() {
                   />
                 </th>
               )}
-              <th onClick={() => handleSort('corporateNumber')} className="th-corp-no">法人会員番号 <SortIcon col="corporateNumber" /></th>
-              <th onClick={() => handleSort('furigana')} className="th-name">氏名 <SortIcon col="furigana" /></th>
-              <th onClick={() => handleSort('company')}>会社名 <SortIcon col="company" /></th>
-              <th onClick={() => handleSort('memberStatus')}>
-                入会ステータス <SortIcon col="memberStatus" />
-              </th>
+              <FilterableTh colKey="corporateNumber" label="法人会員番号" className="th-corp-no" />
+              <th onClick={() => handleSort('furigana')} className="th-name" style={{ cursor: 'pointer' }}>氏名 <SortIcon col="furigana" /></th>
+              <FilterableTh colKey="company" label="会社名" />
+              <FilterableTh colKey="memberStatus" label="入会ステータス" />
+              <FilterableTh colKey="joinMonth" label="入会月" className="hide-mobile th-month" />
+              <FilterableTh colKey="transferStartMonth" label="振替開始月" className="hide-mobile th-month" />
               {customFields.map(cf => (
-                <th key={cf.id} className="hide-mobile th-wrap" onClick={() => handleSort(`cf:${cf.id}`)} style={{ cursor: 'pointer' }}>
-                  {cf.name} <SortIcon col={`cf:${cf.id}`} />
-                </th>
+                <FilterableTh
+                  key={cf.id}
+                  colKey={`cf:${cf.id}`}
+                  label={cf.name}
+                  className="hide-mobile th-wrap"
+                />
               ))}
               {extraFields.map(col => (
-                <th key={col} className="hide-mobile th-wrap" onClick={() => handleSort(`ef:${col}`)} style={{ cursor: 'pointer' }}>
-                  {col} <SortIcon col={`ef:${col}`} />
-                </th>
+                <FilterableTh
+                  key={col}
+                  colKey={`ef:${col}`}
+                  label={col}
+                  className="hide-mobile th-wrap"
+                />
               ))}
               <th className="hide-mobile th-wrap">直近イベント</th>
               {showEventHistory && (
@@ -541,7 +563,7 @@ export default function MemberList() {
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={totalCols} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
-                  {search || statusFilter || Object.values(cfFilters).some(v => v) || Object.values(efFilters).some(v => v) ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
+                  {hasActiveFilter ? '条件に一致する会員がいません' : 'まだ会員が登録されていません'}
                 </td>
               </tr>
             ) : (
@@ -580,6 +602,12 @@ export default function MemberList() {
                       <option value="">--</option>
                       {statuses.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
+                  </td>
+                  <td className="hide-mobile" onClick={() => mergeMode ? toggleMergeSelection(m.id) : navigate(`/members/${m.id}`)} style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                    {formatMonthDisplay(m.joinMonth)}
+                  </td>
+                  <td className="hide-mobile" onClick={() => mergeMode ? toggleMergeSelection(m.id) : navigate(`/members/${m.id}`)} style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                    {formatMonthDisplay(m.transferStartMonth)}
                   </td>
                   {customFields.map(cf => (
                     <td key={cf.id} className="hide-mobile" onClick={e => e.stopPropagation()}>
@@ -651,6 +679,16 @@ export default function MemberList() {
           extraFields={extraFields}
           onClose={() => setShowMergeModal(false)}
           onComplete={onMergeComplete}
+        />
+      )}
+
+      {openFilterFor && filterAnchor && (
+        <ColumnFilter
+          anchor={filterAnchor}
+          values={uniqueValuesByColumn[openFilterFor] || []}
+          selected={columnFilters[openFilterFor] || new Set()}
+          onChange={set => setColumnFilter(openFilterFor, set)}
+          onClose={() => { setOpenFilterFor(null); setFilterAnchor(null); }}
         />
       )}
 
@@ -786,4 +824,10 @@ function statusStyle(status) {
   if (status === '申込書受領中') return { color: 'var(--color-info)', background: 'var(--color-info-bg)' };
   if (status === '検討中') return { color: 'var(--color-warning)', background: 'var(--color-warning-bg)' };
   return {};
+}
+
+// 入会月・振替開始月の表示 (YYYY-MM → YYYY/MM)
+function formatMonthDisplay(v) {
+  if (!v) return '';
+  return String(v).replace('-', '/');
 }

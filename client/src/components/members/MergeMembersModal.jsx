@@ -8,6 +8,8 @@ const BASIC_FIELDS = [
   { key: 'corporateNumber',    col: '法人会員番号' },
   { key: 'name',               col: '氏名' },
   { key: 'furigana',           col: 'ふりがな' },
+  { key: 'alias',              col: '別名' },
+  { key: 'aliasFurigana',      col: '別名ふりがな' },
   { key: 'email',              col: 'メールアドレス' },
   { key: 'phone',              col: '携帯電話番号' },
   { key: 'company',            col: '会社名' },

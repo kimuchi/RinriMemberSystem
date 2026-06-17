@@ -9,7 +9,7 @@ const router = express.Router();
 
 // 基本フィールド（シート列名 → 表示名）
 const BASE_MEMBER_FIELDS = [
-  '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  '法人会員番号', '氏名', 'ふりがな', '別名', '別名ふりがな', 'メールアドレス', '携帯電話番号',
   '会社名', '住所', '会社電話番号', '入会ステータス', '入会月', '振替開始月', '備考',
 ];
 
@@ -98,11 +98,15 @@ router.post('/preview', async (req, res) => {
     // 会員名簿を読み込み
     const { data: members } = await sheets.getSheetData('会員名簿');
 
-    // 名前→会員のマップ（正規化済み）
+    // 名前→会員のマップ（正規化済み）。氏名を優先し、別名は未登録キーにのみ追加。
     const memberByName = {};
     for (const m of members) {
       const normalized = normalizeName(m['氏名']);
       if (normalized) memberByName[normalized] = m;
+    }
+    for (const m of members) {
+      const alias = normalizeName(m['別名']);
+      if (alias && !memberByName[alias]) memberByName[alias] = m;
     }
 
     const entries = [];

@@ -245,11 +245,15 @@ router.post('/preview', async (req, res) => {
       attendance.filter(a => a['イベントID'] === req.params.id).map(a => a['会員ID'])
     );
 
-    // 名前→会員のマップ（正規化済み）
+    // 名前→会員のマップ（正規化済み）。氏名を優先し、別名は氏名で未登録のキーにのみ追加。
     const memberByName = {};
     for (const m of members) {
       const normalized = normalizeName(m['氏名']);
       if (normalized) memberByName[normalized] = m;
+    }
+    for (const m of members) {
+      const alias = normalizeName(m['別名']);
+      if (alias && !memberByName[alias]) memberByName[alias] = m;
     }
 
     const entries = [];

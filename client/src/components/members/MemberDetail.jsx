@@ -12,7 +12,8 @@ export default function MemberDetail() {
   const isNew = id === 'new';
 
   const [form, setForm] = useState({
-    corporateNumber: '', name: '', furigana: '', email: '', phone: '',
+    corporateNumber: '', name: '', furigana: '', alias: '', aliasFurigana: '',
+    email: '', phone: '',
     company: '', address: '', companyPhone: '',
     memberStatus: '', joinMonth: '', transferStartMonth: '',
     notes: '', customFields: {}, extraFields: {},
@@ -51,6 +52,8 @@ export default function MemberDetail() {
           corporateNumber: m.corporateNumber || '',
           name: m.name || '',
           furigana: m.furigana || '',
+          alias: m.alias || '',
+          aliasFurigana: m.aliasFurigana || '',
           email: m.email || '',
           phone: m.phone || '',
           company: m.company || '',
@@ -179,6 +182,14 @@ export default function MemberDetail() {
             <div className="form-group">
               <label className="form-label">ふりがな</label>
               <input className="form-input" value={form.furigana} onChange={e => handleChange('furigana', e.target.value)} placeholder="例：やまだ たろう" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">別名</label>
+              <input className="form-input" value={form.alias} onChange={e => handleChange('alias', e.target.value)} placeholder="旧姓・通称など（フォーム照合にも使われます）" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">別名ふりがな</label>
+              <input className="form-input" value={form.aliasFurigana} onChange={e => handleChange('aliasFurigana', e.target.value)} placeholder="例：きゅうせい はなこ" />
             </div>
             <div className="form-group">
               <label className="form-label">メールアドレス</label>

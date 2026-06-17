@@ -9,6 +9,8 @@ const BASE_FIELDS = {
   corporateNumber: '法人会員番号',
   name: '氏名',
   furigana: 'ふりがな',
+  alias: '別名',
+  aliasFurigana: '別名ふりがな',
   email: 'メールアドレス',
   phone: '携帯電話番号',
   company: '会社名',
@@ -22,7 +24,7 @@ const BASE_FIELDS = {
 
 // システム管理列（UIに表示しない）
 const SYSTEM_COLUMNS = new Set([
-  'ID', '法人会員番号', '氏名', 'ふりがな', 'メールアドレス', '携帯電話番号',
+  'ID', '法人会員番号', '氏名', 'ふりがな', '別名', '別名ふりがな', 'メールアドレス', '携帯電話番号',
   '会社名', '住所', '会社電話番号', '入会ステータス', '入会月', '振替開始月', '備考', '登録日', '更新日',
 ]);
 
@@ -36,6 +38,9 @@ async function ensureBaseColumns() {
     // 月フィールド（YYYY-MM形式、テキストで保存）
     await sheets.ensureColumn('会員名簿', '入会月', { textFormat: true });
     await sheets.ensureColumn('会員名簿', '振替開始月', { textFormat: true });
+    // 別名・別名ふりがな（照合・エクスポート用）
+    await sheets.ensureColumn('会員名簿', '別名');
+    await sheets.ensureColumn('会員名簿', '別名ふりがな');
     _baseColumnsEnsured = true;
   } catch (err) {
     console.error('ensureBaseColumns error:', err);
@@ -103,6 +108,8 @@ function formatMember(m, customFields, extraFields) {
     corporateNumber: m['法人会員番号'],
     name: m['氏名'],
     furigana: m['ふりがな'],
+    alias: m['別名'],
+    aliasFurigana: m['別名ふりがな'],
     email: m['メールアドレス'],
     phone: m['携帯電話番号'],
     company: m['会社名'],
@@ -553,7 +560,7 @@ router.post('/', async (req, res) => {
     Object.entries(BASE_FIELDS).forEach(([apiKey, sheetCol]) => {
       let val = req.body[apiKey] || '';
       // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
-      if (apiKey === 'furigana') val = normalizeFurigana(val);
+      if (apiKey === 'furigana' || apiKey === 'aliasFurigana') val = normalizeFurigana(val);
       rowData[sheetCol] = val;
     });
 
@@ -600,7 +607,7 @@ router.put('/:id', async (req, res) => {
       if (req.body[apiKey] !== undefined) {
         let val = req.body[apiKey];
         // ふりがなはひらがなに正規化（カタカナ→ひらがな、日本語名はスペース除去）
-        if (apiKey === 'furigana') val = normalizeFurigana(val);
+        if (apiKey === 'furigana' || apiKey === 'aliasFurigana') val = normalizeFurigana(val);
         updatedData[sheetCol] = val;
       }
     });

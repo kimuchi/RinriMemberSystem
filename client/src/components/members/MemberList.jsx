@@ -273,6 +273,8 @@ export default function MemberList() {
       result = result.filter(m => {
         if ((m.name || '').toLowerCase().includes(s)) return true;
         if ((m.furigana || '').toLowerCase().includes(s)) return true;
+        if ((m.alias || '').toLowerCase().includes(s)) return true;
+        if ((m.aliasFurigana || '').toLowerCase().includes(s)) return true;
         if ((m.company || '').toLowerCase().includes(s)) return true;
         if ((m.email || '').toLowerCase().includes(s)) return true;
         if ((m.corporateNumber || '').toLowerCase().includes(s)) return true;

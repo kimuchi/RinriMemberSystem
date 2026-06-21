@@ -447,6 +447,7 @@ router.post('/:id/attendance-list', async (req, res) => {
       memberColumns,
       includeAttendanceStatus,
       infoColumns,
+      rawTextInfoColumns,
       checkItems,
       walkInRows,
       // 旧パラメータ（後方互換）
@@ -505,6 +506,7 @@ router.post('/:id/attendance-list', async (req, res) => {
       memberColumns: memberCols,
       includeAttendanceStatus: includeAttendanceStatus !== false,
       infoColumns: selectedInfoCols,
+      rawTextInfoColumns: Array.isArray(rawTextInfoColumns) ? rawTextInfoColumns.filter(Boolean) : [],
       checkItems: Array.isArray(checkItems) ? checkItems.filter(Boolean) : [],
       walkInRows: typeof walkInRows === 'number' && walkInRows >= 0 ? walkInRows : 10,
     });

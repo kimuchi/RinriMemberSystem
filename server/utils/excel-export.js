@@ -218,6 +218,7 @@ const MEMBER_COL_WIDTHS = {
  *   - 出力する会員列。氏名以外の列。例: [{key:'ふりがな',label:'ふりがな'},{key:'会社名',label:'会社名'}]
  * @param {boolean} [opts.includeAttendanceStatus] - 事前登録（出席状態）列を含めるか
  * @param {string[]} [opts.infoColumns] - 自動出力する出席情報列（例: ['懇親会']）
+ * @param {string[]} [opts.rawTextInfoColumns] - 上記のうち「○マーク」ではなく入力値そのまま出力する列
  * @param {string[]} [opts.checkItems]  - 手書きチェック列名（例: ['朝礼','MS','朝食会']）
  * @param {number} [opts.walkInRows]  - ドタ参加用の空行数（既定: 10）
  */
@@ -227,9 +228,11 @@ async function buildAttendanceListExcel({
   memberColumns = [{ key: 'ふりがな', label: 'ふりがな' }, { key: '会社名', label: '会社名' }],
   includeAttendanceStatus = true,
   infoColumns = [],
+  rawTextInfoColumns = [],
   checkItems = [],
   walkInRows = 10,
 }) {
+  const rawTextSet = new Set(rawTextInfoColumns || []);
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Rinri Member System';
   wb.created = new Date();
@@ -262,9 +265,16 @@ async function buildAttendanceListExcel({
   if (includeAttendanceStatus) {
     cols.push({ key: '__status', label: '事前登録', width: 10, isAttendanceStatus: true });
   }
-  // 出席情報列（自動出力・○ or 値）
+  // 出席情報列（自動出力・○ or 入力値そのまま）
   for (const item of infoColumns) {
-    cols.push({ key: `info:${item}`, label: item, width: 7, isInfo: true });
+    const isRaw = rawTextSet.has(item);
+    cols.push({
+      key: `info:${item}`,
+      label: item,
+      width: isRaw ? 14 : 7,
+      isInfo: true,
+      infoRawText: isRaw,
+    });
   }
   // 当日チェック列（手書き）
   for (const item of checkItems) {
@@ -343,10 +353,16 @@ async function buildAttendanceListExcel({
       } else if (col.isInfo) {
         const fieldName = col.key.slice('info:'.length);
         const value = (att.info || {})[fieldName] || '';
-        cell.value = toParticipationMark(value);
-        if (cell.value === '○') {
-          cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: COLOR.eventMarkFg } };
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.eventMarkBg } };
+        if (col.infoRawText) {
+          // 入力値そのまま出力（左寄せ・読みやすく）
+          cell.value = value;
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        } else {
+          cell.value = toParticipationMark(value);
+          if (cell.value === '○') {
+            cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: COLOR.eventMarkFg } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.eventMarkBg } };
+          }
         }
       } else if (col.isCheck) {
         cell.value = '';

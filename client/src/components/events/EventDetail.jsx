@@ -44,6 +44,7 @@ export default function EventDetail() {
   const [listSelectedMember, setListSelectedMember] = useState(new Set()); // 選択した会員列名
   const [listIncludeStatus, setListIncludeStatus] = useState(true);  // 事前登録列を含める
   const [listSelectedInfo, setListSelectedInfo] = useState(new Set());
+  const [listInfoRawText, setListInfoRawText] = useState(new Set()); // 入力値そのまま出力する出席情報列
 
   useEffect(() => { loadData(); }, [id]);
 
@@ -265,6 +266,7 @@ export default function EventDetail() {
       setListSelectedMember(initial);
       setListIncludeStatus(true);
       setListSelectedInfo(new Set(fields.attendanceInfoColumns || []));
+      setListInfoRawText(new Set());
     } catch (err) {
       toast.error(err.message);
     }
@@ -299,6 +301,15 @@ export default function EventDetail() {
     });
   }
 
+  function toggleInfoRawText(col) {
+    setListInfoRawText(prev => {
+      const next = new Set(prev);
+      if (next.has(col)) next.delete(col);
+      else next.add(col);
+      return next;
+    });
+  }
+
   async function handleListExport() {
     if (!listFields) return;
     const items = listCheckItems
@@ -318,6 +329,7 @@ export default function EventDetail() {
         memberColumns: orderedMember,
         includeAttendanceStatus: listIncludeStatus,
         infoColumns: Array.from(listSelectedInfo),
+        rawTextInfoColumns: Array.from(listSelectedInfo).filter(c => listInfoRawText.has(c)),
         checkItems: items,
         walkInRows: Number(listWalkInRows) || 0,
       });
@@ -684,19 +696,42 @@ export default function EventDetail() {
                     <div className="form-group">
                       <label className="form-label">自動出力する出席情報列（フォーム取込済の情報）</label>
                       <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-xs)' }}>
-                        懇親会出欠などを ○ で表示します（不参加/欠席/なし などは空欄）。
+                        既定では懇親会出欠などを ○ で表示します（不参加/欠席/なし は空欄）。
+                        「入力値で出力」にチェックを入れた列は変換せず、入力値そのままを出力します。
                       </p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
-                        {listFields.attendanceInfoColumns.map(col => (
-                          <label key={col} className="bulk-check-item" style={{ padding: '4px 8px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
-                            <input
-                              type="checkbox"
-                              checked={listSelectedInfo.has(col)}
-                              onChange={() => toggleInfoCol(col)}
-                            />
-                            <span>{col}</span>
-                          </label>
-                        ))}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {listFields.attendanceInfoColumns.map(col => {
+                          const included = listSelectedInfo.has(col);
+                          return (
+                            <div key={col} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', padding: '4px 8px', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                              <label className="bulk-check-item" style={{ flex: 1, padding: 0, background: 'transparent' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={included}
+                                  onChange={() => toggleInfoCol(col)}
+                                />
+                                <span>{col}</span>
+                              </label>
+                              <label
+                                className="bulk-check-item"
+                                style={{
+                                  padding: 0, background: 'transparent',
+                                  opacity: included ? 1 : 0.4,
+                                  cursor: included ? 'pointer' : 'not-allowed',
+                                  fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={listInfoRawText.has(col)}
+                                  onChange={() => toggleInfoRawText(col)}
+                                  disabled={!included}
+                                />
+                                <span>入力値で出力（○マークに変換しない）</span>
+                              </label>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

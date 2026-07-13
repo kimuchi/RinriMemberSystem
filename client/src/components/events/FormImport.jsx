@@ -129,7 +129,7 @@ export default function FormImport({ eventId, onImported }) {
     const newAttendanceColumns = new Set(); // 新規イベント出席列
     let hasBlank = false;
     for (const [fh, raw] of Object.entries(fieldMap)) {
-      if (!raw) continue;
+      if (!raw || raw === '__skip__') continue;
       const parsed = parseMapValue(raw);
       const name = (parsed.column || '').trim();
       if (!name) { hasBlank = true; continue; }
@@ -463,21 +463,25 @@ export default function FormImport({ eventId, onImported }) {
           <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 0, marginBottom: 'var(--space-sm)' }}>
             <strong>会員情報</strong>（氏名/会社名など、人に紐づく情報）は「会員名簿」へ、
             <strong>このイベント限定の情報</strong>（懇親会出欠など）は「イベント出席」へ振り分けます。
-            既存にない項目は「新規列として追加」を選んで列名を入力すると、保存時にシートへ列が追加されます。
+            既存にない項目は「新規列として追加」を選んで列名を入力すると、保存時にシートへ列が追加されます。<br />
+            <strong>未設定の列は取込時にイベント出席シートへ自動保存されます</strong>（内容は失われません）。
+            保存したくない列は「（取り込まない）」を選んでください。
           </p>
           <div className="mapping-table">
             {formHeaders.filter(h => h !== nameField).map(fh => {
               const current = fieldMap[fh] || '';
+              const isSkip = current === '__skip__';
               const parsed = parseMapValue(current);
               const existingMemberSet = new Set(memberFields);
               const existingAttSet = new Set(attendanceFields || []);
-              const isExistingMember = parsed.column && parsed.kind === 'member' && existingMemberSet.has(parsed.column);
-              const isExistingAtt = parsed.column && parsed.kind === 'attendance' && existingAttSet.has(parsed.column);
-              const isNewMember = parsed.column && parsed.kind === 'member' && !isExistingMember;
-              const isNewAtt = parsed.column && parsed.kind === 'attendance' && !isExistingAtt;
+              const isExistingMember = !isSkip && parsed.column && parsed.kind === 'member' && existingMemberSet.has(parsed.column);
+              const isExistingAtt = !isSkip && parsed.column && parsed.kind === 'attendance' && existingAttSet.has(parsed.column);
+              const isNewMember = !isSkip && !!current && parsed.kind === 'member' && !isExistingMember;
+              const isNewAtt = !isSkip && !!current && parsed.kind === 'attendance' && !isExistingAtt;
               // セレクト値（既存ならフル値、新規ならセンチネル）
               let selectValue = '';
-              if (!current) selectValue = '';
+              if (isSkip) selectValue = '__skip__';
+              else if (!current) selectValue = '';
               else if (isExistingMember || isExistingAtt) selectValue = current;
               else if (isNewMember) selectValue = '__new_member__';
               else if (isNewAtt) selectValue = '__new_attendance__';
@@ -500,7 +504,8 @@ export default function FormImport({ eventId, onImported }) {
                       }
                     }}
                   >
-                    <option value="">（スキップ）</option>
+                    <option value="">（イベント出席に自動保存）</option>
+                    <option value="__skip__">（取り込まない）</option>
                     <optgroup label="会員名簿">
                       {memberFields.map(mf => (
                         <option key={`m:${mf}`} value={buildMapValue('member', mf)}>{mf}</option>

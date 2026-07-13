@@ -308,10 +308,12 @@ router.get('/:id/export-fields', async (req, res) => {
       else extra.push(col);
     }
 
-    // 出席シート由来の列
+    // 出席シート由来の列（フォーム取込で自動保存された自由列も含む）
+    const attendanceExtras = await sheets.getAttendanceExtraColumns();
     const attendance = [
       { key: 'attendance:出席状態', label: '出席状態' },
       { key: 'attendance:備考', label: '出席メモ' },
+      ...attendanceExtras.map(c => ({ key: `attendance:${c}`, label: c })),
     ];
 
     res.json({ attendance, basic, custom, extra });

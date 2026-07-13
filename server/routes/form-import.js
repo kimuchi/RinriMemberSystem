@@ -22,10 +22,11 @@ const ATTENDANCE_BASE_COLUMNS = new Set([
 /**
  * fieldMap の値を { kind, column } にパース
  * 例: "member:氏名" / "attendance:懇親会"
+ * "__skip__" は「取り込まない」の明示指定 → null
  * 後方互換: プレフィックスなしの値は会員名簿列とみなす
  */
 function parseMapTarget(value) {
-  if (!value) return null;
+  if (!value || value === '__skip__') return null;
   const idx = value.indexOf(':');
   if (idx < 0) return { kind: 'member', column: value };
   const kind = value.slice(0, idx);
@@ -231,8 +232,8 @@ router.post('/preview', async (req, res) => {
       return res.status(400).json({ error: 'フィールドマッピングが設定されていません' });
     }
 
-    // フォームデータ読み込み
-    const { data: formData } = await sheets.getExternalSheetData(
+    // フォームデータ読み込み（ヘッダーも取得：未マッピング列の自動保存に使用）
+    const { headers: formHeaders, data: formData } = await sheets.getExternalSheetData(
       config['スプレッドシートID'], config['シート名']
     );
 
@@ -282,14 +283,29 @@ router.post('/preview', async (req, res) => {
       const member = memberByName[normalizedFormName];
 
       // フォームデータを会員/出席フィールドにマッピング
+      // マッピング未設定の列は「イベント出席シート」にフォーム列名のまま自動保存する
+      // （"__skip__" 指定の列だけ除外。内容を落とさないため）
       const mappedFormData = {};         // 会員名簿に書き込む値
       const mappedAttendanceData = {};   // イベント出席シートに書き込む値
-      for (const [formCol, rawTarget] of Object.entries(fieldMap)) {
+      for (const formCol of formHeaders) {
         if (formCol === nameField) continue; // 名前は別扱い
-        if (!rawTarget || !row[formCol]) continue;
+        const rawTarget = fieldMap[formCol];
+        const rawValue = row[formCol];
+        if (rawTarget === '__skip__') continue; // 明示的に取り込まない
+        if (!rawTarget) {
+          // 未マッピング列 → イベント出席シートへ自動保存
+          if (formCol === participationField) continue; // 参加区分は備考に記録済み
+          if (!rawValue) continue;
+          // システム列名と衝突する場合はプレフィックスを付けて保護
+          const safeName = ['ID', 'イベントID', '会員ID', '氏名', '出席状態', '備考'].includes(formCol)
+            ? `フォーム_${formCol}` : formCol;
+          mappedAttendanceData[safeName] = rawValue;
+          continue;
+        }
+        if (!rawValue) continue;
         const target = parseMapTarget(rawTarget);
         if (!target) continue;
-        let value = row[formCol];
+        let value = rawValue;
         if (target.kind === 'member') {
           if (target.column === '氏名' || target.column === 'ふりがな') {
             value = normalizeName(value);
@@ -390,6 +406,22 @@ router.post('/execute', async (req, res) => {
     let newMemberCount = 0;
     let skippedCount = 0;
     let attendanceColumnUpdatedCount = 0;
+
+    // 出席データに含まれる自由列がシートに無ければ先に作成
+    // （フォーム追加列の自動保存 - appendRows は未知の列を黙って落とすため必須）
+    const neededCols = new Set();
+    for (const e of (entries || [])) Object.keys(e.attendanceData || {}).forEach(k => neededCols.add(k));
+    for (const nm of (newMembers || [])) Object.keys(nm.attendanceData || {}).forEach(k => neededCols.add(k));
+    if (neededCols.size > 0) {
+      const { headers: attHeaders } = await sheets.getSheetData('イベント出席');
+      const existingCols = new Set(attHeaders);
+      for (const col of neededCols) {
+        if (!existingCols.has(col) && !ATTENDANCE_BASE_COLUMNS.has(col)) {
+          await sheets.addColumnToSheet('イベント出席', col);
+          existingCols.add(col);
+        }
+      }
+    }
 
     // 既登録の出席データを取得（二重登録防止 + 既登録行への列更新用）
     const { data: existingAttendance } = await sheets.getSheetData('イベント出席');

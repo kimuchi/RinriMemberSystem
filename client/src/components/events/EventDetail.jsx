@@ -35,6 +35,14 @@ export default function EventDetail() {
   const [selectedCols, setSelectedCols] = useState(new Set());
   const [exporting, setExporting] = useState(false);
 
+  // 派生列エディタ（エクスポートモーダル内）
+  const [derivedEditing, setDerivedEditing] = useState(false);
+  const [derivedLoading, setDerivedLoading] = useState(false);
+  const [derivedSaving, setDerivedSaving] = useState(false);
+  const [derivedMeta, setDerivedMeta] = useState({ sourceColumns: [], valuesBySource: {} });
+  const [derivedSource, setDerivedSource] = useState('備考');
+  const [derivedDraft, setDerivedDraft] = useState([]);
+
   // 出席登録リスト（受付用）モーダル
   const [showListModal, setShowListModal] = useState(false);
   const [listCheckItems, setListCheckItems] = useState('');
@@ -172,12 +180,13 @@ export default function EventDetail() {
   // エクスポート
   async function openExportModal() {
     setShowExportModal(true);
+    setDerivedEditing(false);
     if (exportFields) return;
     setExportLoading(true);
     try {
       const res = await api.getExportFields(id);
       setExportFields(res);
-      // デフォルト: 氏名・出席状態・主要連絡先
+      // デフォルト: 氏名・出席状態・主要連絡先（派生列は定義済みなら全チェック）
       const defaults = new Set([
         'member:氏名',
         'member:ふりがな',
@@ -188,12 +197,71 @@ export default function EventDetail() {
       const allCols = [...(res.attendance || []), ...(res.basic || []), ...(res.custom || []), ...(res.extra || [])];
       const initial = new Set();
       allCols.forEach(c => { if (defaults.has(c.key)) initial.add(c.key); });
+      (res.derived || []).forEach(c => initial.add(c.key));
       setSelectedCols(initial);
     } catch (err) {
       toast.error(err.message);
       setShowExportModal(false);
     } finally {
       setExportLoading(false);
+    }
+  }
+
+  // ---- 派生列エディタ ----
+  async function openDerivedEditor() {
+    setDerivedLoading(true);
+    try {
+      const res = await api.getDerivedColumns(id);
+      setDerivedMeta({ sourceColumns: res.sourceColumns || [], valuesBySource: res.valuesBySource || {} });
+      if (res.config) {
+        setDerivedSource(res.config.source || (res.sourceColumns?.[0] ?? '備考'));
+        setDerivedDraft((res.config.columns || []).map(c => ({
+          name: c.name,
+          keywordsText: (c.keywords || []).join(', '),
+        })));
+      } else {
+        setDerivedSource(res.sourceColumns?.[0] ?? '備考');
+        setDerivedDraft([{ name: '', keywordsText: '' }]);
+      }
+      setDerivedEditing(true);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setDerivedLoading(false);
+    }
+  }
+
+  function parseKeywords(text) {
+    return String(text || '').split(/[,、，]/).map(s => s.trim()).filter(Boolean);
+  }
+
+  async function handleDerivedSave() {
+    const columns = derivedDraft
+      .map(d => ({ name: (d.name || '').trim(), keywords: parseKeywords(d.keywordsText) }))
+      .filter(d => d.name && d.keywords.length > 0);
+    // 名前はあるがキーワードが空、の中途半端な行を警告
+    const incomplete = derivedDraft.some(d => (d.name || '').trim() && parseKeywords(d.keywordsText).length === 0);
+    if (incomplete) {
+      toast.warning('キーワードが未入力の列があります');
+      return;
+    }
+    setDerivedSaving(true);
+    try {
+      await api.saveDerivedColumns(id, { source: derivedSource, columns });
+      toast.success(columns.length > 0 ? '派生列を保存しました' : '派生列の定義を削除しました');
+      // エクスポート列リストを更新（新しい派生列をチェック済みに）
+      const res = await api.getExportFields(id);
+      setExportFields(res);
+      setSelectedCols(prev => {
+        const next = new Set([...prev].filter(k => !k.startsWith('derived:')));
+        (res.derived || []).forEach(c => next.add(c.key));
+        return next;
+      });
+      setDerivedEditing(false);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setDerivedSaving(false);
     }
   }
 
@@ -226,6 +294,7 @@ export default function EventDetail() {
     const ordered = [
       ...exportFields.attendance,
       ...exportFields.basic,
+      ...(exportFields.derived || []),
       ...exportFields.custom,
       ...exportFields.extra,
     ].filter(c => selectedCols.has(c.key));
@@ -599,15 +668,17 @@ export default function EventDetail() {
       {/* エクスポートモーダル */}
       {showExportModal && (
         <div className="modal-overlay" onClick={() => !exporting && setShowExportModal(false)}>
-          <div className="modal-content bulk-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-content bulk-modal" onClick={e => e.stopPropagation()} style={derivedEditing ? { width: 680, maxWidth: '95vw' } : undefined}>
             <div className="modal-header">
-              <h2>Excelエクスポート</h2>
-              <button className="btn-icon" onClick={() => setShowExportModal(false)} disabled={exporting}>
+              <h2>{derivedEditing ? '派生列の定義' : 'Excelエクスポート'}</h2>
+              <button className="btn-icon" onClick={() => derivedEditing ? setDerivedEditing(false) : setShowExportModal(false)} disabled={exporting || derivedSaving}>
                 <Icon name="close" size={20} />
               </button>
             </div>
-            <div className="modal-body">
-              {exportLoading ? (
+            <div className="modal-body" style={{ overflowY: 'auto' }}>
+              {derivedEditing ? (
+                renderDerivedEditor()
+              ) : exportLoading ? (
                 <div style={{ textAlign: 'center', padding: 'var(--space-lg)' }}><div className="spinner" /></div>
               ) : !exportFields ? (
                 <p style={{ color: 'var(--color-text-muted)' }}>列情報を取得できませんでした</p>
@@ -619,12 +690,34 @@ export default function EventDetail() {
                   <div className="bulk-list" style={{ maxHeight: 'none' }}>
                     {renderExportGroup('出席情報', exportFields.attendance)}
                     {renderExportGroup('基本情報', exportFields.basic)}
+                    {(exportFields.derived || []).length > 0 && renderExportGroup('派生列（値から○を自動判定）', exportFields.derived)}
                     {exportFields.custom.length > 0 && renderExportGroup('カスタムフィールド', exportFields.custom)}
                     {exportFields.extra.length > 0 && renderExportGroup('追加列', exportFields.extra)}
+                  </div>
+                  <div style={{ marginTop: 'var(--space-sm)' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={openDerivedEditor} disabled={derivedLoading}>
+                      <Icon name="rule" size={16} />
+                      {derivedLoading ? '読み込み中...' : '派生列を定義（参加申込の値から○列を作る）'}
+                    </button>
                   </div>
                 </>
               )}
             </div>
+            {derivedEditing ? (
+              <div className="modal-footer">
+                <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+                  値がキーワードのいずれかを含むと ○ になります
+                </span>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <button className="btn btn-secondary" onClick={() => setDerivedEditing(false)} disabled={derivedSaving}>
+                    戻る
+                  </button>
+                  <button className="btn btn-primary" onClick={handleDerivedSave} disabled={derivedSaving}>
+                    {derivedSaving ? '保存中...' : '定義を保存'}
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div className="modal-footer">
               <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
                 {selectedCols.size}列 選択中
@@ -642,6 +735,7 @@ export default function EventDetail() {
                 </button>
               </div>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -812,6 +906,113 @@ export default function EventDetail() {
               </label>
             );
           })}
+        </div>
+      </div>
+    );
+  }
+
+  // --- 派生列エディタ ---
+  function renderDerivedEditor() {
+    const values = derivedMeta.valuesBySource[derivedSource] || [];
+    const draftCols = derivedDraft.map(d => ({
+      name: (d.name || '').trim(),
+      keywords: parseKeywords(d.keywordsText),
+    }));
+    const previewCols = draftCols.filter(d => d.name && d.keywords.length > 0);
+
+    return (
+      <div>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+          「参加申込」などの回答値から、キーワードを含むかどうかで <strong>○</strong> を付ける列を定義します。<br />
+          例: 「設立式典・懇親会共に参加」→ 式典・懇親会の両方に ○
+        </p>
+
+        <div className="form-group">
+          <label className="form-label">元になる列（イベント出席シート）</label>
+          <select
+            className="form-select"
+            value={derivedSource}
+            onChange={e => setDerivedSource(e.target.value)}
+            style={{ maxWidth: 320 }}
+          >
+            {derivedMeta.sourceColumns.map(c => (
+              <option key={c} value={c}>{c === '備考' ? '備考（参加区分）' : c}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">出力する列（列名 と 判定キーワード）</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+            {derivedDraft.map((d, i) => (
+              <div key={i} style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+                <input
+                  className="form-input"
+                  style={{ width: 140 }}
+                  placeholder="列名（例: 式典）"
+                  value={d.name}
+                  onChange={e => setDerivedDraft(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                />
+                <Icon name="arrow_forward" size={16} style={{ color: 'var(--color-text-muted)' }} />
+                <input
+                  className="form-input"
+                  style={{ flex: 1 }}
+                  placeholder="キーワード（カンマ区切り。例: 設立式典, 式典）"
+                  value={d.keywordsText}
+                  onChange={e => setDerivedDraft(prev => prev.map((x, j) => j === i ? { ...x, keywordsText: e.target.value } : x))}
+                />
+                <button
+                  className="btn-icon"
+                  onClick={() => setDerivedDraft(prev => prev.filter((_, j) => j !== i))}
+                  title="削除"
+                >
+                  <Icon name="close" size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ marginTop: 'var(--space-sm)' }}
+            onClick={() => setDerivedDraft(prev => [...prev, { name: '', keywordsText: '' }])}
+          >
+            <Icon name="add" size={16} /> 列を追加
+          </button>
+        </div>
+
+        {/* 実データでのプレビュー */}
+        <div className="form-group">
+          <label className="form-label">プレビュー（このイベントの「{derivedSource}」の値 {values.length}種類）</label>
+          {values.length === 0 ? (
+            <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+              この列にはまだ値がありません。フォーム取込後に定義すると実データで確認できます。
+            </p>
+          ) : (
+            <div style={{ overflow: 'auto', maxHeight: 260, border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
+              <table className="data-table" style={{ fontSize: 'var(--font-size-xs)' }}>
+                <thead>
+                  <tr>
+                    <th>値</th>
+                    {previewCols.map(c => <th key={c.name} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>{c.name}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {values.map(v => (
+                    <tr key={v}>
+                      <td>{v}</td>
+                      {previewCols.map(c => (
+                        <td key={c.name} style={{ textAlign: 'center' }}>
+                          {c.keywords.some(k => v.includes(k))
+                            ? <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>○</span>
+                            : ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     );

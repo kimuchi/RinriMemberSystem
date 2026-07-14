@@ -114,6 +114,10 @@ export const api = {
     ),
   getAttendanceListFields: (eventId) =>
     apiFetch(`/api/events/${eventId}/attendance-list-fields`),
+  getDerivedColumns: (eventId) =>
+    apiFetch(`/api/events/${eventId}/derived-columns`),
+  saveDerivedColumns: (eventId, data) =>
+    apiFetch(`/api/events/${eventId}/derived-columns`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Form Import
   getFormConfig: (eventId) => apiFetch(`/api/events/${eventId}/form`),

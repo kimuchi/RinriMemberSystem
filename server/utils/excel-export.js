@@ -155,7 +155,7 @@ async function buildExcelBuffer({ sheetName, columns, rows, statusColorMap = {} 
   columns.forEach((col, idx) => {
     const wsCol = ws.getColumn(idx + 1);
     if (col.isEventColumn) {
-      wsCol.width = 6;
+      wsCol.width = col.width || 6;
       return;
     }
     let maxW = visualWidth(col.label || '');

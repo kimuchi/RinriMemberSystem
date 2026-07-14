@@ -287,6 +287,117 @@ router.delete('/:eventId/attendance/:attId', async (req, res) => {
   }
 });
 
+// ============ エクスポート派生列 ============
+// 「参加申込」等の値からキーワード判定で ○ を出力する列をイベントごとに定義する
+
+const DERIVED_SHEET = 'エクスポート派生列';
+const DERIVED_HEADERS = ['イベントID', '定義'];
+
+async function getDerivedConfig(eventId) {
+  await sheets.ensureSheet(DERIVED_SHEET, DERIVED_HEADERS);
+  const { data } = await sheets.getSheetData(DERIVED_SHEET);
+  const row = data.find(d => d['イベントID'] === eventId);
+  if (!row) return { config: null, _rowIndex: null };
+  let config = null;
+  try { config = JSON.parse(row['定義'] || 'null'); } catch (e) {}
+  return { config, _rowIndex: row._rowIndex };
+}
+
+// 値がキーワードのいずれかを含めば ○
+function evalDerivedMark(value, keywords) {
+  if (!value) return '';
+  const s = String(value);
+  return (keywords || []).some(k => k && s.includes(k)) ? '○' : '';
+}
+
+/**
+ * GET /api/events/:id/derived-columns - 派生列定義と編集用データを取得
+ * 返却: {
+ *   config: { source, columns: [{ name, keywords: [] }] } | null,
+ *   sourceColumns: ['備考', ...出席シート自由列],
+ *   valuesBySource: { 列名: [このイベントのユニーク値] }
+ * }
+ */
+router.get('/:id/derived-columns', async (req, res) => {
+  try {
+    const { config } = await getDerivedConfig(req.params.id);
+    const extras = await sheets.getAttendanceExtraColumns();
+    const sourceColumns = ['備考', ...extras];
+
+    const { data: attendance } = await sheets.getSheetData('イベント出席');
+    const eventRows = attendance.filter(a => a['イベントID'] === req.params.id);
+    const valuesBySource = {};
+    for (const col of sourceColumns) {
+      const set = new Set();
+      eventRows.forEach(r => {
+        const v = (r[col] || '').trim();
+        if (v) set.add(v);
+      });
+      valuesBySource[col] = [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+    }
+
+    res.json({ config, sourceColumns, valuesBySource });
+  } catch (err) {
+    console.error('Get derived columns error:', err);
+    res.status(500).json({ error: '派生列定義の取得に失敗しました' });
+  }
+});
+
+/**
+ * PUT /api/events/:id/derived-columns - 派生列定義を保存
+ * body: { source: '参加申込', columns: [{ name: '式典', keywords: ['式典'] }] }
+ * columns を空にすると定義を削除
+ */
+router.put('/:id/derived-columns', async (req, res) => {
+  try {
+    const { source, columns } = req.body || {};
+
+    // 正規化: 名前必須・キーワード1つ以上・名前の重複は先勝ち
+    const seen = new Set();
+    const cleaned = (Array.isArray(columns) ? columns : [])
+      .map(c => ({
+        name: String(c?.name || '').trim(),
+        keywords: (Array.isArray(c?.keywords) ? c.keywords : [])
+          .map(k => String(k).trim()).filter(Boolean),
+      }))
+      .filter(c => {
+        if (!c.name || c.keywords.length === 0) return false;
+        if (seen.has(c.name)) return false;
+        seen.add(c.name);
+        return true;
+      });
+
+    const { _rowIndex } = await getDerivedConfig(req.params.id);
+
+    if (cleaned.length === 0) {
+      // 定義削除
+      if (_rowIndex) await sheets.deleteRow(DERIVED_SHEET, _rowIndex);
+      return res.json({ success: true, deleted: true });
+    }
+
+    if (!source || typeof source !== 'string') {
+      return res.status(400).json({ error: '元になる列を選択してください' });
+    }
+
+    const json = JSON.stringify({ source, columns: cleaned });
+    if (_rowIndex) {
+      await sheets.updateRow(DERIVED_SHEET, _rowIndex, {
+        'イベントID': req.params.id,
+        '定義': json,
+      });
+    } else {
+      await sheets.appendRow(DERIVED_SHEET, {
+        'イベントID': req.params.id,
+        '定義': json,
+      });
+    }
+    res.json({ success: true, columns: cleaned });
+  } catch (err) {
+    console.error('Save derived columns error:', err);
+    res.status(500).json({ error: '派生列定義の保存に失敗しました' });
+  }
+});
+
 /**
  * GET /api/events/:id/export-fields - エクスポート可能な列の一覧
  */
@@ -316,7 +427,13 @@ router.get('/:id/export-fields', async (req, res) => {
       ...attendanceExtras.map(c => ({ key: `attendance:${c}`, label: c })),
     ];
 
-    res.json({ attendance, basic, custom, extra });
+    // 派生列（値からの○自動判定）
+    const { config: derivedConfig } = await getDerivedConfig(req.params.id);
+    const derived = (derivedConfig?.columns || [])
+      .filter(c => c && c.name)
+      .map(c => ({ key: `derived:${c.name}`, label: c.name }));
+
+    res.json({ attendance, basic, custom, extra, derived });
   } catch (err) {
     console.error('Get export fields error:', err);
     res.status(500).json({ error: 'エクスポート列の取得に失敗しました' });
@@ -350,6 +467,17 @@ router.post('/:id/export', async (req, res) => {
       .map(a => ({ att: a, member: memberById[a['会員ID']] || {} }))
       .sort((a, b) => (a.member['ふりがな'] || '').localeCompare(b.member['ふりがな'] || '', 'ja'));
 
+    // 派生列の定義（derived:* が選択されている場合のみ読み込み）
+    let derivedByName = {};
+    let derivedSource = '備考';
+    if (columns.some(c => c.key && c.key.startsWith('derived:'))) {
+      const { config: derivedConfig } = await getDerivedConfig(req.params.id);
+      derivedSource = derivedConfig?.source || '備考';
+      (derivedConfig?.columns || []).forEach(c => {
+        if (c && c.name) derivedByName[c.name] = c;
+      });
+    }
+
     const dataRows = rows.map(({ att, member }) => columns.map(col => {
       const sep = col.key.indexOf(':');
       if (sep < 0) return '';
@@ -363,14 +491,26 @@ router.post('/:id/export', async (req, res) => {
         if (field === '氏名') return member['氏名'] || att['氏名'] || '';
         return member[field] || '';
       }
+      if (source === 'derived') {
+        const def = derivedByName[field];
+        if (!def) return '';
+        return evalDerivedMark(att[derivedSource], def.keywords);
+      }
       return '';
     }));
 
-    const columnsWithMeta = columns.map(c => ({
-      label: c.label || '',
-      key: c.key,
-      isStatusColumn: c.key === 'member:入会ステータス',
-    }));
+    const columnsWithMeta = columns.map(c => {
+      const isDerived = !!(c.key && c.key.startsWith('derived:'));
+      return {
+        label: c.label || '',
+        key: c.key,
+        isStatusColumn: c.key === 'member:入会ステータス',
+        // 派生列は○マーク列として中央寄せ・緑ハイライトのスタイルを適用
+        isEventColumn: isDerived,
+        // 列名が読める幅を確保（全角=2換算 + 余白、6〜14の範囲）
+        width: isDerived ? Math.min(Math.max((c.label || '').length * 2 + 2, 6), 14) : undefined,
+      };
+    });
     const dashboardCards = await sheets.getDashboardCards();
     const buffer = await buildExcelBuffer({
       sheetName: '出席者一覧',
